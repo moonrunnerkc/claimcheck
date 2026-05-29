@@ -1,0 +1,6 @@
+{
+  "label": "vacuous",
+  "expectedTier": "block",
+  "mode": "fix",
+  "description": "Same discount fix, but the test only asserts the call does not throw. A no-op mutant on the changed line survives and the changed value never reaches an assertion, so the kill-check and assertion-reachability agree on BLOCK."
+}

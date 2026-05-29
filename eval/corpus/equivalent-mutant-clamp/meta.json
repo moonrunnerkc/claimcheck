@@ -1,0 +1,6 @@
+{
+  "label": "equivalent-mutant",
+  "expectedTier": "warn",
+  "mode": "fix",
+  "description": "An honest clamp fix. Every logic-altering mutant is killed except the boundary mutant > to >=, which the tests do not distinguish because they never hit n == max. ClaimCheck cannot prove it equivalent, so it warns rather than blocking: a surviving non-no-op mutant is never a false block."
+}

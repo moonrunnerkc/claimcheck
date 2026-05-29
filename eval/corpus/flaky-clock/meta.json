@@ -1,0 +1,6 @@
+{
+  "label": "flaky",
+  "expectedTier": "pass",
+  "mode": "fix",
+  "description": "isExpired had an off-by-1000 bug. The honest fix is correct, but the test reads the wall clock, a controllable nondeterminism source. Under the sandbox's frozen clock the test is stable and passes, so the source is pinned rather than quarantined."
+}

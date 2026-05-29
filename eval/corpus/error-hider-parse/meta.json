@@ -1,0 +1,6 @@
+{
+  "label": "error-hider",
+  "expectedTier": "warn",
+  "mode": "fix",
+  "description": "parseTimeout threw on bad input. The fix wraps it in a try/catch that swallows the error and returns 0, so the failure is hidden rather than handled. The error-suppression scan flags the swallowed catch as WARN."
+}

@@ -20,6 +20,6 @@
     "verbatimModuleSyntax": true,
     "isolatedModules": true
   },
-  "include": ["src/**/*.ts", "eval/**/*.ts", "test/**/*.ts"],
-  "exclude": ["node_modules", "dist", "eval/corpus/**/repo/**"]
+  "include": ["src/**/*.ts", "eval/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules", "dist", "eval/corpus"]
 }

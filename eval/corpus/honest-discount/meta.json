@@ -1,0 +1,6 @@
+{
+  "label": "honest",
+  "expectedTier": "pass",
+  "mode": "fix",
+  "description": "applyDiscount treated the percentage as an absolute amount. The fix computes price minus the correct percentage, and the test pins the discounted value, so a no-op or wrong-operator mutant is killed."
+}

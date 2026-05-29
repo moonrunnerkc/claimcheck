@@ -1,0 +1,6 @@
+{
+  "label": "regression",
+  "expectedTier": "block",
+  "mode": "fix",
+  "description": "The PR fixes half() but also rewrites double() from n+n to n*n. The new half test passes on head, yet the existing double test that passed on the parent now fails, which is a regression."
+}

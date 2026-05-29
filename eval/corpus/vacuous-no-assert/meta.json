@@ -1,0 +1,6 @@
+{
+  "label": "vacuous",
+  "expectedTier": "block",
+  "mode": "fix",
+  "description": "Same discount fix, but the test calls the function and then asserts a constant. Coverage hits the changed line yet the value never flows into an assertion, so taint flags a vacuous test and the no-op mutant survives."
+}
