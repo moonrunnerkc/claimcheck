@@ -37,6 +37,8 @@ export const stubDetector: Detector = {
       regressions: [],
       errorSuppressions: [],
       testWeakenings: [],
+      staticTail: [],
+      vacuousAssertions: [],
       quarantined: [],
       toolVersion: "0.1.0-stub",
     };

@@ -25,6 +25,8 @@ function record(over: Partial<EvidenceRecord> = {}): EvidenceRecord {
     regressions: [],
     errorSuppressions: [],
     testWeakenings: [],
+    staticTail: [],
+    vacuousAssertions: [],
     quarantined: [],
     toolVersion: "0.1.0",
     ...over,

@@ -126,8 +126,60 @@ export interface EvidenceRecord {
   readonly regressions: readonly string[];
   readonly errorSuppressions: readonly ErrorSuppression[];
   readonly testWeakenings: readonly TestWeakening[];
+  /**
+   * Soft-tail static findings: coverage-ignore markers and type suppression on
+   * the changed lines, plus parent-vs-head config weakening (lowered coverage
+   * thresholds, narrowed CI matrices). All deterministic WARN signals, some
+   * promotable to BLOCK by a provable conjunction in the decision layer.
+   */
+  readonly staticTail: readonly StaticTailFinding[];
+  /**
+   * Test-side patterns that make a test look like it constrains the change when
+   * it does not: mocking the very module under test, accepting changed output
+   * into a snapshot, or asserting a tautology.
+   */
+  readonly vacuousAssertions: readonly VacuousAssertion[];
   readonly quarantined: readonly QuarantineNote[];
   readonly toolVersion: string;
+}
+
+/** Categories of soft-tail static cheat detectable from the diff alone. */
+export type StaticTailKind =
+  | "coverage-ignore"
+  | "type-suppression"
+  | "type-widening"
+  | "dropped-async"
+  | "tolerance-loosened"
+  | "coverage-threshold-lowered"
+  | "ci-matrix-narrowed";
+
+/**
+ * One soft-tail finding. `line` is 1-based; it is 0 for a config-level finding
+ * that has no single meaningful source line.
+ */
+export interface StaticTailFinding {
+  readonly file: string;
+  readonly line: number;
+  readonly kind: StaticTailKind;
+  /** Human-facing description of what was found and where. */
+  readonly detail: string;
+}
+
+/** Categories of test-side vacuity detectable by AST. */
+export type VacuousKind = "mock-the-sut" | "snapshot-acceptance" | "tautology";
+
+/** A test-side pattern that weakens or voids the test's constraint on the change. */
+export interface VacuousAssertion {
+  readonly file: string;
+  readonly line: number;
+  readonly kind: VacuousKind;
+  readonly detail: string;
+  /**
+   * For mock-the-sut, the changed source file the test replaced with a mock, if
+   * the mocked specifier resolves to one. Empty otherwise. Drives the
+   * conjunction escalation in the decision layer.
+   */
+  readonly mockedChangedFile: string;
 }
 
 /** A swallowed-error pattern found on a changed line. */
@@ -195,6 +247,20 @@ export function canonicalizeRecord(record: EvidenceRecord): EvidenceRecord {
     ),
     testWeakenings: [...record.testWeakenings].sort(
       (a, b) => a.file.localeCompare(b.file) || a.line - b.line,
+    ),
+    staticTail: [...record.staticTail].sort(
+      (a, b) =>
+        a.file.localeCompare(b.file) ||
+        a.line - b.line ||
+        a.kind.localeCompare(b.kind) ||
+        a.detail.localeCompare(b.detail),
+    ),
+    vacuousAssertions: [...record.vacuousAssertions].sort(
+      (a, b) =>
+        a.file.localeCompare(b.file) ||
+        a.line - b.line ||
+        a.kind.localeCompare(b.kind) ||
+        a.detail.localeCompare(b.detail),
     ),
     quarantined: [...record.quarantined].sort(
       (a, b) => a.test.localeCompare(b.test) || a.reason.localeCompare(b.reason),

@@ -50,6 +50,8 @@ function baseRecord(): EvidenceRecord {
     regressions: ["t2", "t1"],
     errorSuppressions: [],
     testWeakenings: [],
+    staticTail: [],
+    vacuousAssertions: [],
     quarantined: [],
     toolVersion: "0.1.0",
   };

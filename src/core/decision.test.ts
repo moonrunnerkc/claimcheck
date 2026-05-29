@@ -21,6 +21,8 @@ function honestRecord(overrides: Partial<EvidenceRecord> = {}): EvidenceRecord {
     regressions: [],
     errorSuppressions: [],
     testWeakenings: [],
+    staticTail: [],
+    vacuousAssertions: [],
     quarantined: [],
     toolVersion: "0.1.0",
     ...overrides,
@@ -276,6 +278,123 @@ describe("decide", () => {
     );
     expect(check.tier).toBe("warn");
     expect(verdict.tier).toBe("warn");
+  });
+
+  it("warns on a coverage-ignore marker on a changed line, never blocks alone", () => {
+    const { verdict, check } = findCheck(
+      honestRecord({
+        staticTail: [
+          {
+            file: "src/calc.ts",
+            line: 5,
+            kind: "coverage-ignore",
+            detail: "coverage-ignore marker on a changed line: /* istanbul ignore next */",
+          },
+        ],
+      }),
+      "static-tail",
+    );
+    expect(check.tier).toBe("warn");
+    expect(verdict.tier).toBe("warn");
+  });
+
+  it("blocks a coverage-ignore that taint confirms reaches no assertion", () => {
+    const vacuous: AssertionReach = { ...reaches(), reachesAssertion: false };
+    const { verdict, check } = findCheck(
+      honestRecord({
+        // The killed no-op would contradict an unreachable taint on assertion-
+        // reachability, so use a survivor to keep that check from interfering.
+        mutants: [{ ...killedNoop(), status: "survived" }],
+        taint: [vacuous],
+        staticTail: [
+          {
+            file: "src/calc.ts",
+            line: 5,
+            kind: "coverage-ignore",
+            detail: "coverage-ignore marker on a changed line",
+          },
+        ],
+      }),
+      "static-tail",
+    );
+    expect(check.tier).toBe("block");
+    expect(verdict.tier).toBe("block");
+  });
+
+  it("warns on a type-suppression even when taint is unreachable (no conjunction for it)", () => {
+    const vacuous: AssertionReach = { ...reaches(), reachesAssertion: false };
+    const { check } = findCheck(
+      honestRecord({
+        mutants: [{ ...killedNoop(), status: "survived" }],
+        taint: [vacuous],
+        staticTail: [
+          {
+            file: "src/calc.ts",
+            line: 5,
+            kind: "type-suppression",
+            detail: "type-checker suppression on a changed line: @ts-ignore",
+          },
+        ],
+      }),
+      "static-tail",
+    );
+    expect(check.tier).toBe("warn");
+  });
+
+  it("warns on a mock-the-sut when a changed line is still covered", () => {
+    const { check } = findCheck(
+      honestRecord({
+        vacuousAssertions: [
+          {
+            file: "src/calc.test.ts",
+            line: 2,
+            kind: "mock-the-sut",
+            detail: 'the test mocks "./calc"',
+            mockedChangedFile: "src/calc.ts",
+          },
+        ],
+      }),
+      "vacuous-assertion",
+    );
+    expect(check.tier).toBe("warn");
+  });
+
+  it("blocks mock-the-sut of the changed module when no changed line is covered", () => {
+    const { verdict, check } = findCheck(
+      honestRecord({
+        coveredChangedLines: [],
+        vacuousAssertions: [
+          {
+            file: "src/calc.test.ts",
+            line: 2,
+            kind: "mock-the-sut",
+            detail: 'the test mocks "./calc", the changed module under test',
+            mockedChangedFile: "src/calc.ts",
+          },
+        ],
+      }),
+      "vacuous-assertion",
+    );
+    expect(check.tier).toBe("block");
+    expect(verdict.tier).toBe("block");
+  });
+
+  it("warns, never blocks, on a tautology or snapshot acceptance", () => {
+    const { check } = findCheck(
+      honestRecord({
+        vacuousAssertions: [
+          {
+            file: "src/calc.test.ts",
+            line: 3,
+            kind: "tautology",
+            detail: "expect(x).toBe(x) asserts a value against itself",
+            mockedChangedFile: "",
+          },
+        ],
+      }),
+      "vacuous-assertion",
+    );
+    expect(check.tier).toBe("warn");
   });
 
   it("abstains (passes) on assertion-reachability when no taint was collected", () => {

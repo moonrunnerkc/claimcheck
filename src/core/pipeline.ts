@@ -7,7 +7,9 @@ import type {
   LineRange,
   NdSource,
   QuarantineNote,
+  StaticTailFinding,
   TestWeakening,
+  VacuousAssertion,
 } from "./evidence-record.js";
 import type { Verdict } from "./verdict.js";
 import { buildBundle, type VerdictBundle } from "../bundle/verdict-bundle.js";
@@ -17,6 +19,9 @@ import { listFiles, showFile, unifiedDiff } from "../git/git.js";
 import { analyzeDiff, isTestFile, sourceRanges, testFiles } from "../git/diff.js";
 import { runRegression } from "../checks/regression.js";
 import { scanErrorSuppression } from "../checks/error-suppression.js";
+import { scanStaticTail } from "../checks/static-tail.js";
+import { scanDiffTail } from "../checks/diff-tail.js";
+import { scanVacuousAssertions } from "../checks/vacuous-assertion.js";
 import { compareTestFile } from "../checks/test-weakening.js";
 import { findToolchainModules } from "../adapters/toolchain.js";
 import { collectCoverage, intersectChangedLines } from "../coverage/collect.js";
@@ -242,6 +247,39 @@ export async function runPipeline(
       testWeakenings.push(...compareTestFile(file, parentContent, headContent));
     }
 
+    // Soft-tail static scan: coverage-ignore markers, type suppression, and
+    // `any` widening on the changed source lines.
+    const staticTail: StaticTailFinding[] = scanStaticTail(
+      [...sourceByFile.entries()].map(([path, content]) => ({ path, content })),
+      rangesByFile,
+    );
+    // Parent-vs-head soft-tail: lowered coverage thresholds, narrowed CI
+    // matrices, dropped awaits, loosened numeric tolerances. Applies to every
+    // changed file, dispatched by name; the source on-line scan above already
+    // covers head-only patterns, so the two do not overlap.
+    for (const f of changed) {
+      const parentContent = await showFile(options.repoPath, worktrees.baseSha, f.path);
+      const headContent = await showFile(options.repoPath, worktrees.headSha, f.path);
+      if (parentContent === null || headContent === null) continue;
+      staticTail.push(...scanDiffTail({ path: f.path, parentContent, headContent }));
+    }
+
+    // Test-side vacuity: mocking the changed module, snapshotting changed
+    // output, or asserting a tautology. Scanned on the head content of every
+    // new test file, before taint rewrites them.
+    const vacuousAssertions: VacuousAssertion[] = [];
+    for (const file of newTestFiles) {
+      const content = await showFile(options.repoPath, worktrees.headSha, file);
+      if (content === null) continue;
+      vacuousAssertions.push(
+        ...scanVacuousAssertions({
+          testFile: file,
+          content,
+          changedSourceFiles,
+        }),
+      );
+    }
+
     // Assertion-reachability by def-use taint. Runs last because it rewrites
     // source and test files in place; nothing reads the worktree after it.
     const taint =
@@ -267,6 +305,8 @@ export async function runPipeline(
       regressions,
       errorSuppressions,
       testWeakenings,
+      staticTail,
+      vacuousAssertions,
       quarantined,
       toolVersion: TOOL_VERSION,
     };

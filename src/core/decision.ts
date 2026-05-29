@@ -4,6 +4,8 @@ import type {
   AssertionReach,
   EvidenceRecord,
   MutantOutcome,
+  StaticTailFinding,
+  VacuousAssertion,
 } from "./evidence-record.js";
 import { hashRecord } from "./evidence-record.js";
 
@@ -363,6 +365,115 @@ function checkErrorSuppression(record: EvidenceRecord): CheckResult {
 }
 
 /**
+ * A coverage-ignore marker is provably block-worthy when an independent signal
+ * agrees the marked line is unconstrained: taint observed the changed
+ * expression on (or adjacent to) the marker line and found it never reaches an
+ * assertion. Suppressing coverage on a line the test cannot observe anyway is
+ * the mechanical signature of hiding an untested change.
+ */
+function coverageIgnoreConfirmedVacuous(
+  record: EvidenceRecord,
+): StaticTailFinding[] {
+  const ignores = record.staticTail.filter((f) => f.kind === "coverage-ignore");
+  if (ignores.length === 0 || record.taint.length === 0) return [];
+  const unreachable = record.taint.filter((t) => !t.reachesAssertion);
+  return ignores.filter((marker) =>
+    unreachable.some(
+      (t) => t.file === marker.file && Math.abs(t.line - marker.line) <= 1,
+    ),
+  );
+}
+
+/**
+ * static-tail. Coverage-ignore markers, type suppression, and config/CI
+ * weakening on the changed lines are WARN: mechanical evidence that a tool was
+ * told to look away from the change. A coverage-ignore confirmed unconstrained
+ * by taint is the provable conjunction and escalates to BLOCK.
+ */
+function checkStaticTail(record: EvidenceRecord): CheckResult {
+  if (record.staticTail.length === 0) {
+    return {
+      id: "static-tail",
+      tier: "pass",
+      summary: "No coverage-ignore, type-suppression, or config-weakening on the changed lines.",
+      evidence: [],
+    };
+  }
+  const confirmed = coverageIgnoreConfirmedVacuous(record);
+  if (confirmed.length > 0) {
+    return {
+      id: "static-tail",
+      tier: "block",
+      summary:
+        "A coverage-ignore marker sits on a changed line that taint proves no assertion observes; the change is suppressed and untested.",
+      evidence: confirmed.map(
+        (f) => `${f.file}:${f.line} ${f.kind}: ${f.detail}; taint=unreachable`,
+      ),
+    };
+  }
+  return {
+    id: "static-tail",
+    tier: "warn",
+    summary:
+      "A changed line carries a coverage-ignore marker, a type-checker suppression, or a weakened coverage/CI gate; verify it is intentional.",
+    evidence: record.staticTail.map(
+      (f) => `${f.file}:${f.line} ${f.kind}: ${f.detail}`,
+    ),
+  };
+}
+
+/**
+ * mock-the-sut is provably block-worthy when the mocked module is the changed
+ * file under test and no changed line is executed by any active test: the real
+ * fix never runs, so the test cannot constrain it. Both facts come from the run
+ * alone (the diff and the observed coverage), so this is a clean BLOCK.
+ */
+function mockedOutSut(record: EvidenceRecord): VacuousAssertion[] {
+  if (record.coveredChangedLines.length > 0) return [];
+  return record.vacuousAssertions.filter(
+    (v) => v.kind === "mock-the-sut" && v.mockedChangedFile.length > 0,
+  );
+}
+
+/**
+ * vacuous-assertion. Mocking the module under test, snapshotting changed output,
+ * or asserting a tautology are WARN: each makes a test look like it constrains
+ * the change without doing so, but each can be benign. Mocking the changed
+ * module while no changed line runs is the provable conjunction and is BLOCK.
+ */
+function checkVacuousAssertion(record: EvidenceRecord): CheckResult {
+  if (record.vacuousAssertions.length === 0) {
+    return {
+      id: "vacuous-assertion",
+      tier: "pass",
+      summary: "No mock-the-SUT, snapshot-acceptance, or tautological assertion in the new tests.",
+      evidence: [],
+    };
+  }
+  const mockedOut = mockedOutSut(record);
+  if (mockedOut.length > 0) {
+    return {
+      id: "vacuous-assertion",
+      tier: "block",
+      summary:
+        "The test mocks the changed module under test and no changed line runs; the test cannot exercise the claimed fix.",
+      evidence: mockedOut.map(
+        (v) => `${v.file}:${v.line} mock-the-sut: ${v.detail}; covered-changed-lines=0`,
+      ),
+    };
+  }
+  return {
+    id: "vacuous-assertion",
+    tier: "warn",
+    summary:
+      "A new test mocks the subject, accepts a snapshot of changed output, or asserts a tautology; confirm it constrains the change.",
+    evidence: record.vacuousAssertions.map(
+      (v) => `${v.file}:${v.line} ${v.kind}: ${v.detail}`,
+    ),
+  };
+}
+
+/**
  * test-weakening. Removing or loosening an existing assertion, skipping a test,
  * or marking it todo to fit the changed code is a BLOCK. Changing an expected
  * value is ambiguous (the behavior may legitimately have changed), so it is
@@ -441,6 +552,8 @@ export function decide(record: EvidenceRecord): Verdict {
     checkKillCheck(record),
     checkRegression(record),
     checkErrorSuppression(record),
+    checkStaticTail(record),
+    checkVacuousAssertion(record),
     checkTestWeakening(record),
     checkQuarantine(record),
   ];
