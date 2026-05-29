@@ -37,6 +37,8 @@ export interface VitestRunOptions {
   readonly coverageDir?: string;
   /** Extra environment, for example the sandbox preload via NODE_OPTIONS. */
   readonly env?: Readonly<Record<string, string>>;
+  /** Vitest config to load, relative to cwd; pins the deterministic sandbox. */
+  readonly configFile?: string;
   readonly timeoutMs?: number;
 }
 
@@ -103,6 +105,9 @@ export async function runVitest(
     resultsFile,
     "--no-color",
   ];
+  if (options.configFile) {
+    args.push("--config", options.configFile);
+  }
   if (options.coverageDir) {
     args.push(
       "--coverage.enabled=true",

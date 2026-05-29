@@ -49,6 +49,20 @@ describe("runPipeline against the corpus", () => {
     expect(verdict.tier).not.toBe("block");
   }, 180_000);
 
+  it("passes a flaky-clock fix once the sandbox pins the wall clock", async () => {
+    const { verdict, record } = await run("flaky-clock");
+    expect(verdict.tier).toBe("pass");
+    // The clock source was found and recorded as controllable.
+    expect(record.nondeterminism.some((s) => s.kind === "wall-clock")).toBe(true);
+  }, 180_000);
+
+  it("quarantines a test that needs uncontrollable network and warns", async () => {
+    const { verdict, record } = await run("quarantine-network");
+    expect(verdict.tier).toBe("warn");
+    expect(record.quarantined.length).toBeGreaterThan(0);
+    expect(record.quarantined[0]?.reason).toContain("network");
+  }, 180_000);
+
   it("reproduces an identical bundle hash across reruns", async () => {
     const first = await run("honest-discount");
     const second = await run("honest-discount");

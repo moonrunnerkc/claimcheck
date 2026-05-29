@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { exec } from "../util/exec.js";
 import type { MutantOutcome, MutantStatus } from "../core/evidence-record.js";
 import { isNoopOrInversion, mutantId } from "./mutant-select.js";
+import { scopedSandboxConfig, writeSandboxSetup } from "../determinism/sandbox.js";
 
 /**
  * Orchestrate Stryker over explicit per-line mutate ranges and parse its
@@ -102,14 +103,16 @@ export async function runStryker(
   if (options.mutateRanges.length === 0) return [];
 
   const configPath = join(options.worktreeDir, "claimcheck.stryker.json");
-  const vitestConfigPath = join(options.worktreeDir, "claimcheck.vitest.config.ts");
+  const vitestConfigPath = join(options.worktreeDir, "claimcheck.stryker.vitest.config.ts");
   const reportPath = join(options.worktreeDir, "reports", "mutation", "mutation.json");
-  // Scope the runner to the tests the kill-check holds responsible. Other tests
-  // in the repo (including ones the PR deliberately regresses) must not enter
-  // Stryker's initial run, or a pre-existing failure would abort it.
-  const vitestConfig = `import { defineConfig } from "vitest/config";\nexport default defineConfig({ test: { include: ${JSON.stringify(
-    options.testFiles.length > 0 ? [...options.testFiles] : ["**/*.{test,spec}.*"],
-  )} } });\n`;
+  // Scope the runner to the tests the kill-check holds responsible, and load the
+  // deterministic sandbox so mutants run under the same pinned conditions as the
+  // baseline. Other tests in the repo (including ones the PR deliberately
+  // regresses) must not enter Stryker's initial run, or a pre-existing failure
+  // would abort it.
+  const vitestConfig = scopedSandboxConfig(
+    options.testFiles.length > 0 ? options.testFiles : ["**/*.{test,spec}.*"],
+  );
   const config = {
     testRunner: "vitest",
     coverageAnalysis: "perTest",
@@ -120,11 +123,12 @@ export async function runStryker(
     disableTypeChecks: true,
     tempDirName: ".stryker-tmp",
     cleanTempDir: true,
-    vitest: { configFile: "claimcheck.vitest.config.ts" },
+    vitest: { configFile: "claimcheck.stryker.vitest.config.ts" },
   };
 
   const bin = join(options.worktreeDir, "node_modules", ".bin", "stryker");
   try {
+    await writeSandboxSetup(options.worktreeDir);
     await writeFile(vitestConfigPath, vitestConfig, "utf8");
     await writeFile(configPath, JSON.stringify(config), "utf8");
     await exec(bin, ["run", configPath], {

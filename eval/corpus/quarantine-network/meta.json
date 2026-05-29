@@ -1,0 +1,6 @@
+{
+  "label": "flaky",
+  "expectedTier": "warn",
+  "mode": "fix",
+  "description": "checkHealth used status === 200 instead of res.ok. The test exercises it through a live fetch, an uncontrollable nondeterminism source the sandbox cannot pin. The test is quarantined with that reason, leaving no test to constrain the fix, so the verdict is WARN rather than a guess."
+}

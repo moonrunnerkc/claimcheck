@@ -18,7 +18,8 @@ export interface FailsOnParentOptions {
   readonly headSha: string;
   /** New or modified test files, repo-relative. */
   readonly testFiles: readonly string[];
-  readonly env?: Readonly<Record<string, string>>;
+  /** Vitest config to load, relative to the parent worktree. */
+  readonly configFile?: string;
 }
 
 /**
@@ -37,7 +38,7 @@ export async function runFailsOnParent(
   const result = await runVitest({
     cwd: options.parentDir,
     testFiles: options.testFiles,
-    ...(options.env ? { env: options.env } : {}),
+    ...(options.configFile ? { configFile: options.configFile } : {}),
   });
 
   if (result.noTests) return "indeterminate";

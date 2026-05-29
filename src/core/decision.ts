@@ -369,6 +369,30 @@ function checkTestWeakening(record: EvidenceRecord): CheckResult {
 }
 
 /**
+ * quarantine. Tests excluded for nondeterminism (an uncontrollable source or a
+ * residual flip under enforcement) do not affect the verdict, but their
+ * presence is surfaced as WARN so the reviewer knows the verdict rests on a
+ * reduced test set, with the exact reason attached.
+ */
+function checkQuarantine(record: EvidenceRecord): CheckResult {
+  if (record.quarantined.length === 0) {
+    return {
+      id: "quarantine",
+      tier: "pass",
+      summary: "No test was quarantined for nondeterminism.",
+      evidence: [],
+    };
+  }
+  return {
+    id: "quarantine",
+    tier: "warn",
+    summary:
+      "A test was quarantined for nondeterminism and excluded from the verdict; the result rests on the remaining tests.",
+    evidence: record.quarantined.map((q) => `${q.test}: ${q.reason}`),
+  };
+}
+
+/**
  * Compute the verdict from the canonical evidence record. Pure and total: the
  * verdict tier is the worst tier across every check under block-precedence, and
  * the bundle hash is the content address of the record.
@@ -386,6 +410,7 @@ export function decide(record: EvidenceRecord): Verdict {
     checkRegression(record),
     checkErrorSuppression(record),
     checkTestWeakening(record),
+    checkQuarantine(record),
   ];
   const tier: VerdictTier = worstTier(checks.map((c) => c.tier));
   return {
