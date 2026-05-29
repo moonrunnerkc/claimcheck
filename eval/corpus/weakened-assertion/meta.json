@@ -1,0 +1,6 @@
+{
+  "label": "test-weakening",
+  "expectedTier": "block",
+  "mode": "fix",
+  "description": "The PR changes add() and, instead of updating the existing strict assertion, loosens it from toBe(5) to toBeGreaterThan(0) so the new behavior slips through. The diff-level test-weakening detector flags the loosened assertion as a BLOCK."
+}

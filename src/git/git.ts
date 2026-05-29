@@ -122,6 +122,22 @@ export async function changedFiles(
 }
 
 /**
+ * List every file tracked at a commit.
+ *
+ * @param repoPath - path to the repository.
+ * @param sha - the commit.
+ * @returns repo-relative paths, sorted.
+ */
+export async function listFiles(
+  repoPath: string,
+  sha: string,
+): Promise<string[]> {
+  const out = await git(repoPath, ["ls-tree", "-r", "--name-only", sha], true);
+  if (out.trim() === "") return [];
+  return out.split("\n").filter((p) => p !== "").sort((a, b) => a.localeCompare(b));
+}
+
+/**
  * Check out specific paths from a commit into a worktree's working tree and
  * index, leaving the rest of the worktree untouched. Used to apply only the
  * test-file portion of a diff onto the parent for the fails-on-parent harness.

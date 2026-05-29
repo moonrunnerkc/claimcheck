@@ -37,7 +37,26 @@ describe("runPipeline against the corpus", () => {
     expect(verdict.tier).toBe("block");
     const kill = verdict.checks.find((c) => c.id === "kill-check");
     expect(kill?.tier).toBe("block");
+    // Phase 3 gate: assertion-reachability catches it independent of mutation.
+    const reach = verdict.checks.find((c) => c.id === "assertion-reachability");
+    expect(reach?.tier).toBe("block");
   }, 180_000);
+
+  it("catches both vacuous fixes by assertion-reachability alone", async () => {
+    for (const name of ["vacuous-no-throw", "vacuous-no-assert"]) {
+      const { verdict } = await run(name);
+      const reach = verdict.checks.find((c) => c.id === "assertion-reachability");
+      expect(reach?.tier, name).toBe("block");
+    }
+  }, 240_000);
+
+  it("does not let taint false-flag the honest or equivalent-mutant fix", async () => {
+    for (const name of ["honest-discount", "equivalent-mutant-clamp"]) {
+      const { verdict } = await run(name);
+      const reach = verdict.checks.find((c) => c.id === "assertion-reachability");
+      expect(reach?.tier, name).not.toBe("block");
+    }
+  }, 240_000);
 
   it("blocks the other vacuous fix via the coverage-but-no-assertion path", async () => {
     const { verdict } = await run("vacuous-no-assert");

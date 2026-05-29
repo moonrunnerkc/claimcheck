@@ -2,16 +2,22 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Claim } from "./claim.js";
 import type {
+  ErrorSuppression,
   EvidenceRecord,
+  LineRange,
   NdSource,
   QuarantineNote,
+  TestWeakening,
 } from "./evidence-record.js";
 import type { Verdict } from "./verdict.js";
-import { decide } from "./decision.js";
+import { buildBundle, type VerdictBundle } from "../bundle/verdict-bundle.js";
 import { TOOL_VERSION } from "../version.js";
 import { createWorktrees, linkNodeModules } from "../git/worktree.js";
-import { unifiedDiff } from "../git/git.js";
-import { analyzeDiff, sourceRanges, testFiles } from "../git/diff.js";
+import { listFiles, showFile, unifiedDiff } from "../git/git.js";
+import { analyzeDiff, isTestFile, sourceRanges, testFiles } from "../git/diff.js";
+import { runRegression } from "../checks/regression.js";
+import { scanErrorSuppression } from "../checks/error-suppression.js";
+import { compareTestFile } from "../checks/test-weakening.js";
 import { findToolchainModules } from "../adapters/toolchain.js";
 import { collectCoverage, intersectChangedLines } from "../coverage/collect.js";
 import { runFailsOnParent } from "../checks/fails-on-parent.js";
@@ -23,6 +29,8 @@ import {
 } from "../analysis/nondeterminism-scan.js";
 import { prepareSandbox } from "../determinism/sandbox.js";
 import { detectResidualFlakes } from "../determinism/flake-fallback.js";
+import { runTaint } from "../analysis/def-use-taint.js";
+import { classifyMutants } from "../analysis/mutant-equivalence.js";
 
 /**
  * The pipeline orchestrates the check battery and fills the canonical evidence
@@ -42,6 +50,8 @@ export interface PipelineOptions {
 export interface PipelineResult {
   readonly record: EvidenceRecord;
   readonly verdict: Verdict;
+  /** The content-addressed, replayable bundle derived from the record. */
+  readonly bundle: VerdictBundle;
 }
 
 /** Read the head contents of the changed source files and the new test files. */
@@ -160,12 +170,68 @@ export async function runPipeline(
     });
 
     const mutateRanges = toMutateRanges(coveredChangedLines);
-    const mutants =
+    const rawMutants =
       headTestsPass && mutateRanges.length > 0
         ? await runStryker({
             worktreeDir: worktrees.headDir,
             mutateRanges,
             testFiles: activeTestFiles,
+          })
+        : [];
+    // Analytical pre-filter: classify unreachable and trivially-equivalent
+    // mutants so their survival is never read as a weak test.
+    const sourceByFile = new Map<string, string>();
+    for (const file of changedSourceFiles) {
+      try {
+        sourceByFile.set(file, await readFile(join(worktrees.headDir, file), "utf8"));
+      } catch {
+        // Source absent at head; skip.
+      }
+    }
+    const mutants = classifyMutants(rawMutants, sourceByFile);
+
+    // Differential regression: parent tests the PR did not touch must still pass.
+    const parentTestFiles = (await listFiles(options.repoPath, worktrees.baseSha))
+      .filter(isTestFile);
+    const regressions = await runRegression({
+      parentDir: worktrees.parentDir,
+      headDir: worktrees.headDir,
+      parentTestFiles,
+      changedTestFiles: newTestFiles,
+      quarantinedTests: flakyNames,
+      configFile,
+    });
+
+    // Error-suppression: swallowed errors on the changed source lines.
+    const rangesByFile = new Map<string, LineRange[]>();
+    for (const f of changed) {
+      if (f.isSource) rangesByFile.set(f.path, [...f.ranges]);
+    }
+    const errorSuppressions: ErrorSuppression[] = scanErrorSuppression(
+      [...sourceByFile.entries()].map(([path, content]) => ({ path, content })),
+      rangesByFile,
+    );
+
+    // Test-weakening: existing tests the PR modified, compared parent vs head.
+    const testWeakenings: TestWeakening[] = [];
+    const parentTestSet = new Set(parentTestFiles);
+    for (const file of newTestFiles) {
+      if (!parentTestSet.has(file)) continue; // newly added test, nothing to weaken
+      const parentContent = await showFile(options.repoPath, worktrees.baseSha, file);
+      const headContent = await showFile(options.repoPath, worktrees.headSha, file);
+      if (parentContent === null || headContent === null) continue;
+      testWeakenings.push(...compareTestFile(file, parentContent, headContent));
+    }
+
+    // Assertion-reachability by def-use taint. Runs last because it rewrites
+    // source and test files in place; nothing reads the worktree after it.
+    const taint =
+      headTestsPass && coveredChangedLines.length > 0
+        ? await runTaint({
+            worktreeDir: worktrees.headDir,
+            sourceFiles: changedSourceFiles,
+            testFiles: activeTestFiles,
+            coveredChangedLines,
           })
         : [];
 
@@ -177,16 +243,17 @@ export async function runPipeline(
       failsOnParent,
       coveredChangedLines,
       mutants,
-      taint: [],
+      taint,
       nondeterminism,
-      regressions: [],
-      errorSuppressions: [],
-      testWeakenings: [],
+      regressions,
+      errorSuppressions,
+      testWeakenings,
       quarantined,
       toolVersion: TOOL_VERSION,
     };
 
-    return { record, verdict: decide(record) };
+    const bundle = buildBundle(record);
+    return { record: bundle.record, verdict: bundle.verdict, bundle };
   } finally {
     await worktrees.cleanup();
   }

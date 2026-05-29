@@ -10,7 +10,8 @@ export type CaseLabel =
   | "regression"
   | "error-hider"
   | "flaky"
-  | "equivalent-mutant";
+  | "equivalent-mutant"
+  | "test-weakening";
 
 /** A corpus case as loaded from disk. */
 export interface CorpusCase {
