@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Operating rules for building ClaimCheck. Read `claimcheck-build-plan.md` for the full architecture and the phased plan. This file is the standing constitution; when the two conflict, this file wins on rules and the plan wins on architecture.
+Operating rules for building ClaimCheck. This file is the standing constitution; it wins on rules.
 
 ## What ClaimCheck is
 
@@ -47,7 +47,7 @@ Never write code, a comment, a log line, a doc, or a commit message that claims 
 
 ## The check battery, v0.1
 
-Fix mode only. Seven checks, defined in the build plan: test-touches-code, fails-on-parent, passes-on-head, kill-check, regression, error-suppression, test-weakening. Checks 4 and 5 are decisive; the rest are pre-filters or supporting signals.
+Fix mode only. Eight checks: test-touches-code, fails-on-parent, passes-on-head, assertion-reachability, kill-check, regression, error-suppression, test-weakening. assertion-reachability and kill-check are the decisive pair (the same claim-coverage property by two independent methods); the rest are pre-filters or supporting signals.
 
 ## The verdict bundle contract
 
