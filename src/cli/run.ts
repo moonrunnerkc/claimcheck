@@ -3,6 +3,11 @@ import { runPipeline } from "../core/pipeline.js";
 import { fixClaim } from "../core/claim.js";
 import { writeBundle, readBundle, replayBundle } from "../bundle/verdict-bundle.js";
 import { formatVerdict } from "./format.js";
+import {
+  buildAnnotations,
+  renderAnnotationList,
+  renderGithubAnnotations,
+} from "./annotations.js";
 import { parseArgs, requireOption, type ParsedArgs } from "./args.js";
 import { TOOL_VERSION } from "../version.js";
 
@@ -25,6 +30,8 @@ run options:
   --bundle-out <dir>   write the verdict bundle into this directory
   --cache-dir <dir>    cache and reuse bundles for identical inputs
   --json               print the verdict as JSON instead of text
+  --annotations <fmt>  also emit per-line annotations: "github" (workflow
+                       commands) or "list" (human file:line list)
   --fail-on-warn       exit non-zero (1) on WARN as well as BLOCK
 `;
 
@@ -53,12 +60,23 @@ async function commandRun(args: ParsedArgs): Promise<number> {
   let bundlePath: string | undefined;
   if (bundleOut) bundlePath = await writeBundle(bundleOut, result.bundle);
 
+  const annotationFmt = args.options["annotations"];
+  const annotations =
+    annotationFmt === "github" || annotationFmt === "list"
+      ? buildAnnotations(result.record, result.verdict)
+      : [];
+
   if (args.options["json"] === "true") {
     process.stdout.write(
-      `${JSON.stringify({ verdict: result.verdict, bundlePath }, null, 2)}\n`,
+      `${JSON.stringify({ verdict: result.verdict, bundlePath, annotations }, null, 2)}\n`,
     );
   } else {
     process.stdout.write(`${formatVerdict(result.verdict)}\n`);
+    if (annotationFmt === "github" && annotations.length > 0) {
+      process.stdout.write(`${renderGithubAnnotations(annotations)}\n`);
+    } else if (annotationFmt === "list" && annotations.length > 0) {
+      process.stdout.write(`\nannotations:\n${renderAnnotationList(annotations)}\n`);
+    }
     if (bundlePath) process.stdout.write(`\nbundle written to ${bundlePath}\n`);
   }
   return exitCode(result.verdict.tier, failOnWarn);

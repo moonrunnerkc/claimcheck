@@ -18,7 +18,7 @@ fi
 # git refuses to operate on a workspace owned by another user; trust it.
 git config --global --add safe.directory "${REPO}" || true
 
-ARGS=(run --repo "${REPO}" --base "${BASE}" --head "${HEAD}" --bundle-out "${BUNDLE_OUT}")
+ARGS=(run --repo "${REPO}" --base "${BASE}" --head "${HEAD}" --bundle-out "${BUNDLE_OUT}" --annotations github)
 if [ "${FAIL_ON_WARN}" = "true" ]; then
   ARGS+=(--fail-on-warn)
 fi
@@ -28,13 +28,18 @@ OUTPUT="$(node /opt/claimcheck/dist/cli/run.js "${ARGS[@]}" 2>&1)"
 CODE=$?
 set -e
 
+# Echo everything so the runner parses the ::warning/::error workflow commands
+# and renders them inline on the PR diff.
 echo "${OUTPUT}"
+
+# The job summary shows the verdict text only; the workflow-command lines
+# (prefixed with ::) are runner directives, not summary content.
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   {
     echo "## ClaimCheck verdict"
     echo ""
     echo '```'
-    echo "${OUTPUT}"
+    echo "${OUTPUT}" | grep -v '^::' || true
     echo '```'
   } >> "${GITHUB_STEP_SUMMARY}"
 fi
