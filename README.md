@@ -24,14 +24,14 @@ BLOCK is reserved for a provable lie. When in doubt, the verdict is WARN. A fals
 
 ## The check battery (v0.1, fix mode)
 
-- **test-touches-code** — the new tests must execute the changed source lines.
-- **fails-on-parent** — applying only the test-file diff onto the parent, the new tests must fail there.
-- **passes-on-head** — the new tests must pass on head.
-- **assertion-reachability** — by def-use taint, the changed expression's value must flow into an assertion; if it never does, the test is vacuous.
-- **kill-check** — Stryker mutates the covered changed lines; a surviving no-op/inversion mutant, or a line whose mutants all survive, means the test does not constrain the fix.
-- **regression** — the parent tests the PR did not touch must still pass on head.
-- **error-suppression** — swallowed exceptions and success-on-error-path returns on the changed lines.
-- **test-weakening** — existing assertions loosened, removed, or skipped to fit the change.
+- **test-touches-code**: the new tests must execute the changed source lines.
+- **fails-on-parent**: applying only the test-file diff onto the parent, the new tests must fail there.
+- **passes-on-head**: the new tests must pass on head.
+- **assertion-reachability**: by def-use taint, the changed expression's value must flow into an assertion; if it never does, the test is vacuous.
+- **kill-check**: Stryker mutates the covered changed lines; a surviving no-op/inversion mutant, or a line whose mutants all survive, means the test does not constrain the fix.
+- **regression**: the parent tests the PR did not touch must still pass on head.
+- **error-suppression**: swallowed exceptions and success-on-error-path returns on the changed lines.
+- **test-weakening**: existing assertions loosened, removed, or skipped to fit the change.
 
 assertion-reachability and the kill-check are two independent methods for the same property; they are cross-checked, and disagreement is surfaced as WARN rather than resolved silently.
 
