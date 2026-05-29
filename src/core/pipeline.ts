@@ -31,6 +31,8 @@ import { prepareSandbox } from "../determinism/sandbox.js";
 import { detectResidualFlakes } from "../determinism/flake-fallback.js";
 import { runTaint } from "../analysis/def-use-taint.js";
 import { classifyMutants } from "../analysis/mutant-equivalence.js";
+import { revParse } from "../git/git.js";
+import { AnalysisCache, contentKey } from "../cache/analysis-cache.js";
 
 /**
  * The pipeline orchestrates the check battery and fills the canonical evidence
@@ -45,6 +47,8 @@ export interface PipelineOptions {
   readonly base: string;
   readonly head: string;
   readonly claim: Claim;
+  /** When set, cache and reuse the bundle for identical (base, head, version). */
+  readonly cacheDir?: string;
 }
 
 export interface PipelineResult {
@@ -79,6 +83,21 @@ async function readScanInputs(
 export async function runPipeline(
   options: PipelineOptions,
 ): Promise<PipelineResult> {
+  // Cache hit short-circuit: the verdict is a pure function of the resolved
+  // commits and the tool version, so an identical key reproduces the result.
+  let cache: AnalysisCache | null = null;
+  let cacheKey: string | null = null;
+  if (options.cacheDir) {
+    const baseSha = await revParse(options.repoPath, options.base);
+    const headSha = await revParse(options.repoPath, options.head);
+    cache = new AnalysisCache(options.cacheDir);
+    cacheKey = contentKey([baseSha, headSha, TOOL_VERSION]);
+    const hit = await cache.get<VerdictBundle>(cacheKey);
+    if (hit) {
+      return { record: hit.record, verdict: hit.verdict, bundle: hit };
+    }
+  }
+
   const worktrees = await createWorktrees(
     options.repoPath,
     options.base,
@@ -253,6 +272,7 @@ export async function runPipeline(
     };
 
     const bundle = buildBundle(record);
+    if (cache && cacheKey) await cache.set(cacheKey, bundle);
     return { record: bundle.record, verdict: bundle.verdict, bundle };
   } finally {
     await worktrees.cleanup();

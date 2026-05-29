@@ -1,0 +1,44 @@
+name: ClaimCheck
+description: >-
+  A deterministic, pre-merge gate that tries to falsify a pull request's own
+  claim about what it does, using only the PR and the repository. It proves
+  whether the PR's tests constrain the change, not whether the change is correct.
+author: Aftermath Technologies
+
+inputs:
+  base:
+    description: Parent commit SHA the PR branches from.
+    required: true
+  head:
+    description: Head commit SHA of the PR.
+    required: true
+  repo:
+    description: Path to the repository inside the workspace.
+    required: false
+    default: /github/workspace
+  bundle-out:
+    description: Directory to write the content-addressed verdict bundle into.
+    required: false
+    default: /github/workspace/.claimcheck
+  fail-on-warn:
+    description: Exit non-zero on WARN as well as BLOCK.
+    required: false
+    default: "false"
+
+outputs:
+  bundle-dir:
+    description: Directory the verdict bundle was written to.
+
+runs:
+  using: docker
+  image: Dockerfile
+  env:
+    INPUT_BASE: ${{ inputs.base }}
+    INPUT_HEAD: ${{ inputs.head }}
+    INPUT_REPO: ${{ inputs.repo }}
+    INPUT_BUNDLE_OUT: ${{ inputs.bundle-out }}
+    INPUT_FAIL_ON_WARN: ${{ inputs.fail-on-warn }}
+
+branding:
+  icon: shield
+  color: purple

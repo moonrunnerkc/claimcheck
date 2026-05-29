@@ -25,6 +25,11 @@ async function hasVitest(dir: string): Promise<boolean> {
  * @throws if no node_modules with vitest is found up to the filesystem root.
  */
 export async function findToolchainModules(): Promise<string> {
+  // In the container image the toolchain root is fixed and exported.
+  const pinned = process.env["CLAIMCHECK_TOOLCHAIN"];
+  if (pinned && (await hasVitest(pinned))) {
+    return join(pinned, "node_modules");
+  }
   let dir = dirname(fileURLToPath(import.meta.url));
   for (;;) {
     if (await hasVitest(dir)) return join(dir, "node_modules");
