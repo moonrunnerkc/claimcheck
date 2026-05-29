@@ -1,0 +1,152 @@
+import { readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { exec } from "../util/exec.js";
+import type { MutantOutcome, MutantStatus } from "../core/evidence-record.js";
+import { isNoopOrInversion, mutantId } from "./mutant-select.js";
+
+/**
+ * Orchestrate Stryker over explicit per-line mutate ranges and parse its
+ * mutation report into the canonical {@link MutantOutcome} shape. ClaimCheck
+ * owns the range selection and the result interpretation; Stryker owns the
+ * mutation mechanics.
+ */
+
+export interface StrykerRunOptions {
+  /** Worktree to mutate in; node_modules must be linked and tests must pass. */
+  readonly worktreeDir: string;
+  /** Stryker `path:start-end` mutate specifiers, scoped to covered changed lines. */
+  readonly mutateRanges: readonly string[];
+  /** Test files the kill-check holds responsible, relative to the worktree. */
+  readonly testFiles: readonly string[];
+  /** Extra environment, for example the sandbox preload. */
+  readonly env?: Readonly<Record<string, string>>;
+  readonly timeoutMs?: number;
+}
+
+interface SchemaLocation {
+  start?: { line?: unknown; column?: unknown };
+  end?: { line?: unknown; column?: unknown };
+}
+interface SchemaMutant {
+  mutatorName?: unknown;
+  replacement?: unknown;
+  status?: unknown;
+  location?: SchemaLocation;
+}
+interface SchemaFile {
+  mutants?: unknown;
+}
+interface MutationReport {
+  files?: Record<string, SchemaFile>;
+}
+
+const STATUS_MAP: Readonly<Record<string, MutantStatus>> = {
+  Killed: "killed",
+  Survived: "survived",
+  NoCoverage: "no-coverage",
+  Timeout: "timeout",
+  RuntimeError: "runtime-error",
+  CompileError: "compile-error",
+};
+
+function num(value: unknown, fallback: number): number {
+  return typeof value === "number" ? value : fallback;
+}
+
+/** Parse the Stryker mutation report into canonical mutant outcomes. */
+function parseReport(report: unknown): MutantOutcome[] {
+  const out: MutantOutcome[] = [];
+  if (typeof report !== "object" || report === null) return out;
+  const files = (report as MutationReport).files ?? {};
+  for (const [file, fileReport] of Object.entries(files)) {
+    const mutants = fileReport?.mutants;
+    if (!Array.isArray(mutants)) continue;
+    for (const raw of mutants as SchemaMutant[]) {
+      const mutator = typeof raw.mutatorName === "string" ? raw.mutatorName : "Unknown";
+      const replacement = typeof raw.replacement === "string" ? raw.replacement : "";
+      const statusKey = typeof raw.status === "string" ? raw.status : "";
+      const status = STATUS_MAP[statusKey];
+      if (!status) continue; // Ignored or unknown: not a kill-check signal
+      const startLine = num(raw.location?.start?.line, 0);
+      const startColumn = num(raw.location?.start?.column, 0);
+      const endLine = num(raw.location?.end?.line, startLine);
+      const endColumn = num(raw.location?.end?.column, startColumn);
+      out.push({
+        id: mutantId(file, startLine, startColumn, endLine, endColumn, mutator, replacement),
+        file,
+        startLine,
+        startColumn,
+        endLine,
+        endColumn,
+        mutator,
+        replacement,
+        status,
+        prefilter: "none",
+        noopOrInversion: isNoopOrInversion(mutator),
+      });
+    }
+  }
+  return out.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/**
+ * Write a scoped Stryker config, run Stryker, parse the report, and clean up.
+ *
+ * @param options - worktree, mutate ranges, responsible test files, env.
+ * @returns the mutant outcomes; empty when no ranges were given.
+ * @throws if Stryker fails to start or produces no parseable report.
+ */
+export async function runStryker(
+  options: StrykerRunOptions,
+): Promise<MutantOutcome[]> {
+  if (options.mutateRanges.length === 0) return [];
+
+  const configPath = join(options.worktreeDir, "claimcheck.stryker.json");
+  const vitestConfigPath = join(options.worktreeDir, "claimcheck.vitest.config.ts");
+  const reportPath = join(options.worktreeDir, "reports", "mutation", "mutation.json");
+  // Scope the runner to the tests the kill-check holds responsible. Other tests
+  // in the repo (including ones the PR deliberately regresses) must not enter
+  // Stryker's initial run, or a pre-existing failure would abort it.
+  const vitestConfig = `import { defineConfig } from "vitest/config";\nexport default defineConfig({ test: { include: ${JSON.stringify(
+    options.testFiles.length > 0 ? [...options.testFiles] : ["**/*.{test,spec}.*"],
+  )} } });\n`;
+  const config = {
+    testRunner: "vitest",
+    coverageAnalysis: "perTest",
+    mutate: [...options.mutateRanges],
+    reporters: ["json"],
+    concurrency: 1,
+    timeoutMS: 60_000,
+    disableTypeChecks: true,
+    tempDirName: ".stryker-tmp",
+    cleanTempDir: true,
+    vitest: { configFile: "claimcheck.vitest.config.ts" },
+  };
+
+  const bin = join(options.worktreeDir, "node_modules", ".bin", "stryker");
+  try {
+    await writeFile(vitestConfigPath, vitestConfig, "utf8");
+    await writeFile(configPath, JSON.stringify(config), "utf8");
+    await exec(bin, ["run", configPath], {
+      cwd: options.worktreeDir,
+      ...(options.env ? { env: options.env } : {}),
+      timeoutMs: options.timeoutMs ?? 300_000,
+      allowNonZero: true,
+    });
+    let report: unknown;
+    try {
+      report = JSON.parse(await readFile(reportPath, "utf8"));
+    } catch (cause) {
+      throw new Error(
+        `Stryker produced no mutation report at ${reportPath}; the run likely failed to start. Check the worktree has a passing test suite and a linked node_modules.`,
+        { cause },
+      );
+    }
+    return parseReport(report);
+  } finally {
+    await rm(configPath, { force: true });
+    await rm(vitestConfigPath, { force: true });
+    await rm(join(options.worktreeDir, "reports"), { recursive: true, force: true });
+    await rm(join(options.worktreeDir, ".stryker-tmp"), { recursive: true, force: true });
+  }
+}

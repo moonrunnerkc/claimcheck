@@ -1,7 +1,14 @@
 import { runCorpus } from "./run-corpus.js";
 import { formatMetrics } from "./scoring.js";
-import { stubDetector } from "./detectors.js";
+import { pipelineDetector, stubDetector } from "./detectors.js";
 import type { Detector } from "./detectors.js";
+
+/** Resolve the detector named on the command line; defaults to the pipeline. */
+function detectorFromArgs(): Detector {
+  const name = process.argv[2];
+  if (name === "stub") return stubDetector;
+  return pipelineDetector;
+}
 
 /**
  * CLI entry for `npm run eval`. Runs a detector over the corpus, prints the
@@ -13,7 +20,7 @@ import type { Detector } from "./detectors.js";
  *
  * @param detector - the detector to evaluate; defaults to the stub.
  */
-export async function main(detector: Detector = stubDetector): Promise<void> {
+export async function main(detector: Detector = detectorFromArgs()): Promise<void> {
   const { results, metrics } = await runCorpus(detector);
 
   const rows = [...results].sort((a, b) => a.name.localeCompare(b.name));

@@ -78,7 +78,26 @@ describe("decide", () => {
     expect(verdict.tier).toBe("block");
   });
 
-  it("only warns when a non-no-op mutant survives, since it may be equivalent", () => {
+  it("blocks when every live mutant on a covered changed line survives", () => {
+    // Two arithmetic survivors on the same line: not explainable as a single
+    // equivalent mutant, so the line is provably unconstrained.
+    const a: MutantOutcome = {
+      ...killedNoop(),
+      id: "m-a",
+      mutator: "ArithmeticOperator",
+      noopOrInversion: false,
+      status: "survived",
+    };
+    const b: MutantOutcome = { ...a, id: "m-b", replacement: "a / b" };
+    const { verdict, check } = findCheck(
+      honestRecord({ mutants: [a, b] }),
+      "kill-check",
+    );
+    expect(check.tier).toBe("block");
+    expect(verdict.tier).toBe("block");
+  });
+
+  it("only warns when a single non-no-op mutant survives, since it may be equivalent", () => {
     const survivor: MutantOutcome = {
       ...killedNoop(),
       id: "m-arith",
@@ -208,6 +227,11 @@ describe("decide", () => {
     );
     expect(check.tier).toBe("warn");
     expect(verdict.tier).toBe("warn");
+  });
+
+  it("abstains (passes) on assertion-reachability when no taint was collected", () => {
+    const { check } = findCheck(honestRecord({ taint: [] }), "assertion-reachability");
+    expect(check.tier).toBe("pass");
   });
 
   it("is a pure function: identical records yield identical verdicts and hashes", () => {

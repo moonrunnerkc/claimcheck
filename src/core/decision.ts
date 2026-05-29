@@ -128,6 +128,30 @@ function survivingWeakMutants(record: EvidenceRecord): MutantOutcome[] {
   );
 }
 
+/**
+ * Covered changed lines where at least two live mutants were generated and
+ * every one of them survived. A single survivor could be an equivalent mutant,
+ * but a line on which no mutation is ever caught is provably unconstrained by
+ * the test, whatever the operators were.
+ */
+function fullyUnconstrainedLines(record: EvidenceRecord): string[] {
+  const byLine = new Map<string, MutantOutcome[]>();
+  for (const m of record.mutants) {
+    if (!isLiveMutant(m)) continue;
+    const key = `${m.file}:${m.startLine}`;
+    const group = byLine.get(key) ?? [];
+    group.push(m);
+    byLine.set(key, group);
+  }
+  const lines: string[] = [];
+  for (const [key, group] of byLine) {
+    if (group.length >= 2 && group.every((m) => m.status === "survived")) {
+      lines.push(key);
+    }
+  }
+  return lines.sort((a, b) => a.localeCompare(b));
+}
+
 /** Was any live mutant covering this file/line killed? Used for cross-checking. */
 function killedMutantNear(
   record: EvidenceRecord,
@@ -153,11 +177,13 @@ function killedMutantNear(
 function checkAssertionReachability(record: EvidenceRecord): CheckResult {
   const unreachable = record.taint.filter((t) => !t.reachesAssertion);
   if (record.taint.length === 0) {
+    // Taint was not collected. This check abstains rather than warns: it and
+    // the kill-check are two methods for the same property, and an un-run
+    // analytical method must not downgrade an otherwise clean verdict.
     return {
       id: "assertion-reachability",
-      tier: "warn",
-      summary:
-        "No changed expression could be tracked by taint; assertion reachability is unknown.",
+      tier: "pass",
+      summary: "Assertion reachability was not evaluated; relying on the kill-check.",
       evidence: [],
     };
   }
@@ -226,6 +252,16 @@ function checkKillCheck(record: EvidenceRecord): CheckResult {
       evidence: noopSurvivors.map(
         (m) => `${m.id} ${m.file}:${m.startLine} ${m.mutator} survived`,
       ),
+    };
+  }
+  const unconstrained = fullyUnconstrainedLines(record);
+  if (unconstrained.length > 0) {
+    return {
+      id: "kill-check",
+      tier: "block",
+      summary:
+        "Every mutant on a covered changed line survived; the test does not constrain that line at all.",
+      evidence: unconstrained.map((line) => `${line} fully unconstrained`),
     };
   }
   const weakSurvivors = survivingWeakMutants(record);

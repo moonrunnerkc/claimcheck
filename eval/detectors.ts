@@ -1,6 +1,8 @@
 import type { Verdict } from "../src/core/verdict.js";
 import { decide } from "../src/core/decision.js";
 import type { EvidenceRecord } from "../src/core/evidence-record.js";
+import { runPipeline } from "../src/core/pipeline.js";
+import { fixClaim } from "../src/core/claim.js";
 import type { MaterializedRepo } from "./corpus-repo.js";
 
 /**
@@ -39,5 +41,23 @@ export const stubDetector: Detector = {
       toolVersion: "0.1.0-stub",
     };
     return Promise.resolve(decide(record));
+  },
+};
+
+/**
+ * The real ClaimCheck pipeline as a detector. Runs the full battery against the
+ * materialized case repository.
+ */
+export const pipelineDetector: Detector = {
+  name: "pipeline",
+  async run(repo: MaterializedRepo, mode: "fix"): Promise<Verdict> {
+    const { verdict } = await runPipeline({
+      repoPath: repo.repoPath,
+      base: repo.baseSha,
+      head: repo.headSha,
+      claim: fixClaim(),
+    });
+    void mode;
+    return verdict;
   },
 };

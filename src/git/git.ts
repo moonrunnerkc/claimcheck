@@ -122,6 +122,24 @@ export async function changedFiles(
 }
 
 /**
+ * Check out specific paths from a commit into a worktree's working tree and
+ * index, leaving the rest of the worktree untouched. Used to apply only the
+ * test-file portion of a diff onto the parent for the fails-on-parent harness.
+ *
+ * @param worktreeDir - the worktree to mutate.
+ * @param sha - the commit to take the paths from.
+ * @param paths - repo-relative paths to check out.
+ */
+export async function checkoutPathsFrom(
+  worktreeDir: string,
+  sha: string,
+  paths: readonly string[],
+): Promise<void> {
+  if (paths.length === 0) return;
+  await git(worktreeDir, ["checkout", sha, "--", ...paths]);
+}
+
+/**
  * Read a file's contents at a specific commit.
  *
  * @param repoPath - path to the repository.
