@@ -97,7 +97,7 @@ describe("decide", () => {
     expect(verdict.tier).toBe("block");
   });
 
-  it("only warns when a single non-no-op mutant survives, since it may be equivalent", () => {
+  it("only warns when a single non-no-op mutant survives and the test failed on parent", () => {
     const survivor: MutantOutcome = {
       ...killedNoop(),
       id: "m-arith",
@@ -105,7 +105,56 @@ describe("decide", () => {
       noopOrInversion: false,
       status: "survived",
     };
+    // honestRecord has failsOnParent="failed", so the escalation must not fire.
     const { check } = findCheck(honestRecord({ mutants: [survivor] }), "kill-check");
+    expect(check.tier).toBe("warn");
+  });
+
+  it("escalates to block when the test passes on parent AND a real mutant survives on the fix line", () => {
+    const survivor: MutantOutcome = {
+      ...killedNoop(),
+      id: "m-arith",
+      mutator: "ArithmeticOperator",
+      noopOrInversion: false,
+      status: "survived",
+    };
+    const { verdict, check } = findCheck(
+      honestRecord({ mutants: [survivor], failsOnParent: "passed" }),
+      "kill-check",
+    );
+    expect(check.tier).toBe("block");
+    expect(verdict.tier).toBe("block");
+  });
+
+  it("does not escalate when the surviving mutant is off the covered changed lines", () => {
+    const offLine: MutantOutcome = {
+      ...killedNoop(),
+      id: "m-off",
+      startLine: 99,
+      endLine: 99,
+      mutator: "ArithmeticOperator",
+      noopOrInversion: false,
+      status: "survived",
+    };
+    const { check } = findCheck(
+      honestRecord({ mutants: [offLine], failsOnParent: "passed" }),
+      "kill-check",
+    );
+    expect(check.tier).toBe("warn");
+  });
+
+  it("does not escalate when fails-on-parent is only indeterminate", () => {
+    const survivor: MutantOutcome = {
+      ...killedNoop(),
+      id: "m-arith",
+      mutator: "ArithmeticOperator",
+      noopOrInversion: false,
+      status: "survived",
+    };
+    const { check } = findCheck(
+      honestRecord({ mutants: [survivor], failsOnParent: "indeterminate" }),
+      "kill-check",
+    );
     expect(check.tier).toBe("warn");
   });
 

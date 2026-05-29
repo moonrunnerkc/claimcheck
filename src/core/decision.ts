@@ -152,6 +152,16 @@ function fullyUnconstrainedLines(record: EvidenceRecord): string[] {
   return lines.sort((a, b) => a.localeCompare(b));
 }
 
+/** Does a mutant sit on a line the new tests covered and the PR changed? */
+function isOnCoveredChangedLine(
+  record: EvidenceRecord,
+  m: MutantOutcome,
+): boolean {
+  return record.coveredChangedLines.some(
+    (r) => r.file === m.file && m.startLine >= r.start && m.startLine <= r.end,
+  );
+}
+
 /** Was any live mutant covering this file/line killed? Used for cross-checking. */
 function killedMutantNear(
   record: EvidenceRecord,
@@ -265,6 +275,28 @@ function checkKillCheck(record: EvidenceRecord): CheckResult {
     };
   }
   const weakSurvivors = survivingWeakMutants(record);
+  // Escalation: a single surviving operator mutant on its own could be
+  // equivalent, so it is normally WARN. But when the new test ALSO passes on the
+  // unfixed parent, two independent signals agree that the test does not
+  // exercise the claimed fix: it neither fails on the buggy code nor kills a
+  // real mutation of the fix line. That combination is a provable lie, so it is
+  // BLOCK. It stays narrow on purpose: the mutant must sit on a covered changed
+  // line, and fails-on-parent must be "passed", not merely indeterminate.
+  const weakOnFixLine = weakSurvivors.filter((m) =>
+    isOnCoveredChangedLine(record, m),
+  );
+  if (weakOnFixLine.length > 0 && record.failsOnParent === "passed") {
+    return {
+      id: "kill-check",
+      tier: "block",
+      summary:
+        "The new test passes on the unfixed parent and a real mutation of the fix line survives; the test does not constrain the claimed fix.",
+      evidence: weakOnFixLine.map(
+        (m) =>
+          `${m.id} ${m.file}:${m.startLine} ${m.mutator} survived; fails-on-parent=passed`,
+      ),
+    };
+  }
   if (weakSurvivors.length > 0) {
     return {
       id: "kill-check",

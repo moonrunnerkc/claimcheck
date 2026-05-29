@@ -1,0 +1,6 @@
+{
+  "label": "honest",
+  "expectedTier": "pass",
+  "mode": "fix",
+  "description": "An honest discount fix whose test has an adjacent assertion that passes on the parent (0% discount is unchanged) alongside the assertion that catches the bug. Because one assertion fails on the parent, fails-on-parent is 'failed', so the passes-on-parent escalation does not fire and the fix passes. Guards the escalation rule against false-blocking honest fixes."
+}
