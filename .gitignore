@@ -1,0 +1,8 @@
+node_modules/
+dist/
+claimcheck-build-plan.md
+*.log
+.claimcheck-work/
+coverage/
+.stryker-tmp/
+reports/
