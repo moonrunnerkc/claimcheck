@@ -1,6 +1,6 @@
 import type { OracleFinding } from "../core/evidence-record.js";
 import type { Oracle, OracleContext, ReproInput } from "./oracle.js";
-import { runReproOnce } from "./repro-run.js";
+import { runReproOnce, runReproWithCoverage } from "./repro-run.js";
 
 /**
  * The issue-repro oracle. A bug-fix PR usually links an issue whose body holds
@@ -150,12 +150,15 @@ function indeterminate(summary: string, evidence: readonly string[]): OracleFind
 }
 
 /**
- * The issue-repro oracle. Reads the repro from the context, runs it against head
- * twice for stability and once against parent for corroboration, and reports a
- * finding under the standard tiering. A repro that threw before exercising the
- * code under test (a ReferenceError, a module-resolution failure) is classified
- * errored, never a failed assertion, so it routes to WARN and never to a
- * violation: reading that throw as a failed invariant is the hollow false-BLOCK.
+ * The issue-repro oracle. Reads the repro from the context and runs it under two
+ * guards before trusting any outcome. First the executed-the-code guard: the
+ * head run is collected with coverage and must execute at least one changed
+ * line, else the repro tested nothing about the change (WARN), mirroring
+ * test-touches-code for the agent's own tests. Second, a repro that threw before
+ * exercising the code (a ReferenceError, a module-resolution failure) is
+ * classified errored, never a failed assertion, so it routes to WARN and never
+ * to a violation. Only a repro that ran, exercised the change, and stayed
+ * deterministic is read as satisfied or violated.
  *
  * @returns the oracle.
  */
@@ -176,24 +179,45 @@ export function issueReproOracle(): Oracle {
       const testSource = toRunnableTest(extracted.code);
       const excerpt = reproExcerpt(extracted.code);
 
-      const headA = await runReproOnce(ctx.headDir, testSource);
-      const headB = await runReproOnce(ctx.headDir, testSource);
-
-      if (headA === "errored" || headB === "errored") {
+      // Head run 1, with coverage. A repro that threw before testing anything is
+      // errored (WARN), and a repro that ran but touched none of the changed
+      // code tested nothing about the change (WARN). Either way the outcome
+      // carries no signal and must never become a violation.
+      const head1 = await runReproWithCoverage(
+        ctx.headDir,
+        testSource,
+        ctx.changedRanges,
+      );
+      if (head1.outcome === "errored") {
         return indeterminate(
           "The reproduction failed to run on head: it threw before exercising the code under test, rather than running an assertion that failed. Recorded as a warning, never read as a violation.",
           [excerpt, "head=errored", "repro failed to run, not an assertion failure"],
         );
       }
-      if (headA !== headB) {
+      if (head1.coveredChanged.length === 0) {
+        return indeterminate(
+          "The reproduction ran on head but executed none of the changed code under test, so its outcome says nothing about the change. Recorded as a warning.",
+          [excerpt, `head=${head1.outcome}`, "repro did not exercise the code under test"],
+        );
+      }
+
+      // Head run 2, for stability under the sandbox.
+      const headB = await runReproOnce(ctx.headDir, testSource);
+      if (headB === "errored") {
+        return indeterminate(
+          "The reproduction could not be executed deterministically on head; recorded as a warning, never a guess.",
+          [excerpt, `head=${head1.outcome}/${headB}`],
+        );
+      }
+      if (head1.outcome !== headB) {
         return indeterminate(
           "The reproduction's outcome is nondeterministic under the sandbox; quarantined as a warning.",
-          [excerpt, `head=${headA}/${headB}`],
+          [excerpt, `head=${head1.outcome}/${headB}`],
         );
       }
 
       const parent = await runReproOnce(ctx.parentDir, testSource);
-      const head = headA;
+      const head = head1.outcome;
 
       if (head === "fail") {
         return {

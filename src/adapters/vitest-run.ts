@@ -162,6 +162,11 @@ export async function runVitest(
       "--coverage.reportsDirectory",
       options.coverageDir,
       "--coverage.all=false",
+      // Vitest drops the coverage report when a test fails unless this is set.
+      // The executed-the-code guard must see what a failing repro executed (a
+      // violated repro fails on head by design), so coverage is reported either
+      // way. It only adds the lines a failing run touched; it removes nothing.
+      "--coverage.reportOnFailure=true",
     );
   }
   for (const file of options.testFiles) {

@@ -1,6 +1,8 @@
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { LineRange } from "../core/evidence-record.js";
 import { runVitest, type VitestResult } from "../adapters/vitest-run.js";
+import { collectCoverage, intersectChangedLines } from "../coverage/collect.js";
 import { scopedSandboxConfig } from "../determinism/sandbox.js";
 
 /**
@@ -27,6 +29,13 @@ export const REPRO_CONFIG_FILE = "claimcheck.repro.vitest.config.ts";
  * `fail`, which is an assertion that ran and failed.
  */
 export type ReproOutcome = "pass" | "fail" | "errored";
+
+/** A repro run plus the changed lines it actually executed. */
+export interface ReproCoverageRun {
+  readonly outcome: ReproOutcome;
+  /** Changed source lines the repro executed; empty means it tested nothing. */
+  readonly coveredChanged: readonly LineRange[];
+}
 
 /**
  * Failure-message signatures that mean the code did not run, as opposed to an
@@ -119,6 +128,40 @@ export async function runReproOnce(
       configFile: REPRO_CONFIG_FILE,
     });
     return classifyRun(result);
+  } finally {
+    await rm(testPath, { force: true });
+    await rm(configPath, { force: true });
+  }
+}
+
+/**
+ * Run the repro once with coverage and report both its outcome and the changed
+ * lines it executed. The executed-the-code guard uses the latter: a repro that
+ * touches none of the changed code tested nothing about the change, so its
+ * outcome carries no signal, exactly as test-touches-code requires of the
+ * agent's own tests.
+ *
+ * @param worktreeDir - the worktree to run in; node_modules must be linked.
+ * @param testSource - the runnable vitest test source.
+ * @param changedRanges - changed source line ranges to intersect coverage with.
+ * @returns the outcome and the covered subset of the changed lines.
+ */
+export async function runReproWithCoverage(
+  worktreeDir: string,
+  testSource: string,
+  changedRanges: readonly LineRange[],
+): Promise<ReproCoverageRun> {
+  const { testPath, configPath } = await writeReproFiles(worktreeDir, testSource);
+  try {
+    const { run, coveredLines } = await collectCoverage(
+      worktreeDir,
+      [REPRO_TEST_FILE],
+      REPRO_CONFIG_FILE,
+    );
+    return {
+      outcome: classifyRun(run),
+      coveredChanged: intersectChangedLines(changedRanges, coveredLines),
+    };
   } finally {
     await rm(testPath, { force: true });
     await rm(configPath, { force: true });
