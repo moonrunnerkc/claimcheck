@@ -1,0 +1,280 @@
+import { rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import type { OracleFinding } from "../core/evidence-record.js";
+import { runVitest, type VitestResult } from "../adapters/vitest-run.js";
+import { scopedSandboxConfig } from "../determinism/sandbox.js";
+import type { Oracle, OracleContext, ReproInput } from "./oracle.js";
+
+/**
+ * The issue-repro oracle. A bug-fix PR usually links an issue whose body holds
+ * a human-written reproduction: the failing input and the wrong-versus-expected
+ * behavior, written by the reporter before any fix existed. That text is a
+ * correctness signal the agent did not author, so it is a trusted oracle. The
+ * oracle extracts a machine-parseable repro, runs it against head to assert the
+ * fixed behavior holds, and runs it against parent to corroborate that the bug
+ * reproduced there.
+ *
+ * The catch it enables: a fix whose own tests pass but which fails the
+ * reporter's repro is a wrong-oracle catch, proven against an independent human
+ * source rather than the agent's tests. That is a BLOCK.
+ *
+ * Extraction is deliberately narrow. Only a fenced code block carrying an
+ * executable assertion is treated as a repro. Freeform prose intent is never
+ * parsed by heuristic or model: that would reintroduce the guessing this tool
+ * exists to avoid. A repro that is present but not machine-extractable yields a
+ * WARN, never a fabricated assertion.
+ */
+
+export const ISSUE_REPRO_ORACLE_ID = "issue-repro";
+
+/** The filename the synthesized repro test is written to inside a worktree. */
+const REPRO_TEST_FILE = "claimcheck.repro.test.ts";
+/** The scoped vitest config the repro runs under, pinning the sandbox. */
+const REPRO_CONFIG_FILE = "claimcheck.repro.vitest.config.ts";
+
+/** Outcome of executing the repro once: ran-and-passed, ran-and-failed, or could-not-run. */
+type ReproOutcome = "pass" | "fail" | "errored";
+
+/** Result of extracting a repro from the input. */
+type Extraction =
+  | { readonly kind: "runnable"; readonly code: string }
+  | { readonly kind: "not-extractable" }
+  | { readonly kind: "absent" };
+
+/** Languages whose fenced blocks may hold a runnable JS/TS repro. */
+const JS_LANGS = new Set([
+  "",
+  "js",
+  "jsx",
+  "ts",
+  "tsx",
+  "javascript",
+  "typescript",
+  "mjs",
+  "cjs",
+]);
+
+/** Does this code carry an executable assertion we can run as the oracle? */
+function hasExecutableAssertion(code: string): boolean {
+  return /\bexpect\s*\(/.test(code) || /\bassert\s*(\.|\()/.test(code);
+}
+
+/** Pull every fenced code block out of issue text, with its language tag. */
+function fencedBlocks(text: string): Array<{ lang: string; code: string }> {
+  const blocks: Array<{ lang: string; code: string }> = [];
+  const fence = /```([^\n`]*)\n([\s\S]*?)```/g;
+  let match: RegExpExecArray | null;
+  while ((match = fence.exec(text)) !== null) {
+    const lang = (match[1] ?? "").trim().toLowerCase();
+    const code = match[2] ?? "";
+    blocks.push({ lang, code });
+  }
+  return blocks;
+}
+
+/**
+ * Extract a runnable repro from the input. A supplied `repro-test` is taken as
+ * runnable. For raw issue text, the first JS/TS fenced block carrying an
+ * executable assertion is the repro; a JS/TS block present but without an
+ * assertion is "present, not machine-extractable" (WARN); no code block at all
+ * means there is nothing to extract (the oracle abstains).
+ *
+ * @param input - the supplied repro or the raw issue text.
+ * @returns the extraction outcome.
+ */
+export function extractRepro(input: ReproInput): Extraction {
+  if (input.kind === "repro-test") {
+    return { kind: "runnable", code: input.code };
+  }
+  const blocks = fencedBlocks(input.text);
+  const candidates = blocks.filter((b) => JS_LANGS.has(b.lang));
+  const runnable = candidates.find((b) => hasExecutableAssertion(b.code));
+  if (runnable) return { kind: "runnable", code: runnable.code };
+  if (candidates.length > 0) return { kind: "not-extractable" };
+  return { kind: "absent" };
+}
+
+/** Does the source already import from vitest? */
+function importsVitest(code: string): boolean {
+  return /from\s*["']vitest["']/.test(code);
+}
+
+/** Is the source a complete test (it has a test wrapper), or a bare script? */
+function hasTestWrapper(code: string): boolean {
+  return /\b(it|test|describe)\s*\(/.test(code);
+}
+
+/**
+ * Turn extracted repro code into a self-contained vitest test, without altering
+ * the human-written assertions. A complete test is used verbatim with a vitest
+ * import added if missing. A bare assertion script has its import statements
+ * hoisted to module scope and the remainder wrapped in a single test, so a
+ * top-level `expect`/`assert` becomes an executed assertion.
+ *
+ * @param code - the extracted repro source.
+ * @returns runnable vitest test source.
+ */
+export function toRunnableTest(code: string): string {
+  if (hasTestWrapper(code)) {
+    return importsVitest(code)
+      ? `${code}\n`
+      : `import { describe, it, test, expect, vi } from "vitest";\n${code}\n`;
+  }
+  const lines = code.split("\n");
+  const imports: string[] = [];
+  const body: string[] = [];
+  for (const line of lines) {
+    if (/^\s*import\s.+["'][^"']+["'];?\s*$/.test(line)) imports.push(line);
+    else body.push(line);
+  }
+  const header: string[] = [];
+  if (!importsVitest(code)) header.push(`import { expect, test } from "vitest";`);
+  if (/\bassert\b/.test(code) && !/["']node:assert/.test(code)) {
+    header.push(`import assert from "node:assert/strict";`);
+  }
+  return [
+    ...header,
+    ...imports,
+    `test("issue repro", async () => {`,
+    ...body,
+    `});`,
+    ``,
+  ].join("\n");
+}
+
+/**
+ * Classify a vitest result into a single repro outcome. A run that failed to
+ * load, found no test, or produced no outcome is "errored" (never read as a
+ * pass): an environmental failure must route to WARN, not a verdict. A run with
+ * a failing assertion is "fail"; a run with a passing assertion is "pass".
+ */
+function classifyRun(result: VitestResult): ReproOutcome {
+  if (result.failedToRun || result.noTests || result.outcomes.length === 0) {
+    return "errored";
+  }
+  if (result.outcomes.some((o) => o.status === "fail")) return "fail";
+  if (result.outcomes.some((o) => o.status === "pass")) return "pass";
+  return "errored";
+}
+
+/**
+ * Run the synthesized repro test once inside a worktree under the sandbox, then
+ * remove it so it never leaks into another step's discovery.
+ *
+ * @param worktreeDir - the worktree to run in; node_modules must be linked.
+ * @param testSource - the runnable vitest test source.
+ * @returns whether the repro passed, failed, or could not be executed.
+ */
+async function runReproOnce(
+  worktreeDir: string,
+  testSource: string,
+): Promise<ReproOutcome> {
+  const testPath = join(worktreeDir, REPRO_TEST_FILE);
+  const configPath = join(worktreeDir, REPRO_CONFIG_FILE);
+  try {
+    await writeFile(testPath, testSource, "utf8");
+    const configBody = await scopedSandboxConfig(worktreeDir, [REPRO_TEST_FILE]);
+    await writeFile(configPath, configBody, "utf8");
+    const result = await runVitest({
+      cwd: worktreeDir,
+      testFiles: [REPRO_TEST_FILE],
+      configFile: REPRO_CONFIG_FILE,
+    });
+    return classifyRun(result);
+  } finally {
+    await rm(testPath, { force: true });
+    await rm(configPath, { force: true });
+  }
+}
+
+/** A short, deterministic excerpt of the repro for replayable evidence. */
+function reproExcerpt(code: string): string {
+  const firstReal = code
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l.length > 0);
+  return `repro: ${firstReal ?? "<empty>"} (${code.split("\n").length} lines)`;
+}
+
+function indeterminate(summary: string, evidence: readonly string[]): OracleFinding {
+  return {
+    oracle: ISSUE_REPRO_ORACLE_ID,
+    conclusion: "indeterminate",
+    summary,
+    evidence: [...evidence],
+  };
+}
+
+/**
+ * The issue-repro oracle. Reads the repro from the context, runs it against head
+ * twice for stability and once against parent for corroboration, and reports a
+ * finding under the standard tiering.
+ *
+ * @returns the oracle.
+ */
+export function issueReproOracle(): Oracle {
+  return {
+    id: ISSUE_REPRO_ORACLE_ID,
+    async run(ctx: OracleContext): Promise<OracleFinding | null> {
+      if (!ctx.reproInput) return null;
+      const extracted = extractRepro(ctx.reproInput);
+      if (extracted.kind === "absent") return null;
+      if (extracted.kind === "not-extractable") {
+        return indeterminate(
+          "A reproduction is present in the issue but is not machine-extractable (no executable assertion); the oracle declines rather than guessing an assertion.",
+          ["repro present, not machine-extractable"],
+        );
+      }
+
+      const testSource = toRunnableTest(extracted.code);
+      const headA = await runReproOnce(ctx.headDir, testSource);
+      const headB = await runReproOnce(ctx.headDir, testSource);
+      const excerpt = reproExcerpt(extracted.code);
+
+      if (headA === "errored" || headB === "errored") {
+        return indeterminate(
+          "The reproduction could not be executed deterministically on head; recorded as a warning, never a guess.",
+          [excerpt, `head=${headA}/${headB}`],
+        );
+      }
+      if (headA !== headB) {
+        return indeterminate(
+          "The reproduction's outcome is nondeterministic under the sandbox; quarantined as a warning.",
+          [excerpt, `head=${headA}/${headB}`],
+        );
+      }
+
+      const parent = await runReproOnce(ctx.parentDir, testSource);
+      const head = headA;
+
+      if (head === "fail") {
+        return {
+          oracle: ISSUE_REPRO_ORACLE_ID,
+          conclusion: "violated",
+          summary:
+            "The reporter's reproduction fails on head: the change does not satisfy a correctness signal the agent did not write, even though the PR's own tests pass.",
+          evidence: [
+            excerpt,
+            "head=fail",
+            `parent=${parent}`,
+            parent === "fail"
+              ? "the bug reproduced on parent and still reproduces on head"
+              : parent === "pass"
+                ? "the change introduced a failure of the reporter's reproduction"
+                : "the reproduction could not be evaluated on parent",
+          ],
+        };
+      }
+
+      return {
+        oracle: ISSUE_REPRO_ORACLE_ID,
+        conclusion: "satisfied",
+        summary:
+          parent === "fail"
+            ? "The reporter's reproduction passes on head and failed on parent: the change satisfies the imported signal and the bug demonstrably reproduced before it."
+            : "The reporter's reproduction passes on head.",
+        evidence: [excerpt, "head=pass", `parent=${parent}`],
+      };
+    },
+  };
+}
