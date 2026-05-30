@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-label="ClaimCheck">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b0f17"/>
+      <stop offset="1" stop-color="#11182a"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4f8cff"/>
+      <stop offset="1" stop-color="#7c5cff"/>
+    </linearGradient>
+    <style>
+      text { font-family: "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="360" fill="url(#bg)"/>
+  <rect x="0" y="0" width="1200" height="4" fill="url(#accent)"/>
+
+  <text x="80" y="150" font-size="78" font-weight="700" fill="#f5f7fb" letter-spacing="-2">ClaimCheck</text>
+  <text x="84" y="198" font-size="24" fill="#9aa6bd">It does not trust the PR's tests. It attacks them.</text>
+
+  <g transform="translate(84,250)" font-size="20" font-weight="600">
+    <rect x="0" y="0" width="92" height="40" rx="8" fill="#10301c" stroke="#1f7a45"/>
+    <text x="46" y="26" text-anchor="middle" fill="#4ade80">PASS</text>
+
+    <rect x="108" y="0" width="100" height="40" rx="8" fill="#332a0c" stroke="#9a7d1f"/>
+    <text x="158" y="26" text-anchor="middle" fill="#fbbf24">WARN</text>
+
+    <rect x="224" y="0" width="104" height="40" rx="8" fill="#3a1414" stroke="#a02c2c"/>
+    <text x="276" y="26" text-anchor="middle" fill="#f87171">BLOCK</text>
+
+    <text x="356" y="26" fill="#6b7689" font-size="18" font-weight="400">deterministic verdict, replayable bundle</text>
+  </g>
+
+  <g transform="translate(900,70)" opacity="0.9">
+    <rect x="0" y="0" width="220" height="220" rx="16" fill="#0d1422" stroke="#1c2740"/>
+    <text x="24" y="44" font-size="16" fill="#5b6a85">diff hunk</text>
+    <text x="24" y="74" font-size="16" fill="#7c8aa5">&#8595; coverage</text>
+    <text x="24" y="104" font-size="16" fill="#7c8aa5">&#8595; mutate range</text>
+    <text x="24" y="134" font-size="16" fill="#7c8aa5">&#8595; kill / survive</text>
+    <line x1="24" y1="152" x2="196" y2="152" stroke="#1c2740"/>
+    <text x="24" y="184" font-size="18" font-weight="700" fill="#f87171">surviving mutant</text>
+    <text x="24" y="206" font-size="14" fill="#5b6a85">on a covered changed line</text>
+  </g>
+</svg>
