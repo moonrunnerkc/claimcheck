@@ -45,7 +45,18 @@ Three cheats are out of scope by design, not for lack of time. Each needs an ora
 - **snapshot of broken output**: a snapshot faithfully records the changed code's output, which happens to be the buggy output. The assertion is real; whether the captured value is correct is the open question.
 - **exit-0-while-failed**: a test harness that reports success regardless of the assertions. Distinguishing a genuinely passing run from a rigged one requires trusting the very harness under suspicion.
 
-ClaimCheck never claims to catch these and never silently passes them off as caught. The static-tail and vacuous-assertion checks deliberately stop at the decidable boundary: a *snapshot matcher over changed output* is flagged as a WARN (the pattern is decidable), but whether the captured value is *correct* is not, and ClaimCheck does not pretend to judge it. Closing this tail is a different tool with a different trust model (a spec or a human), not a future ClaimCheck check.
+ClaimCheck never claims to catch these and never silently passes them off as caught. The static-tail and vacuous-assertion checks deliberately stop at the decidable boundary: a *snapshot matcher over changed output* is flagged as a WARN (the pattern is decidable), but whether the captured value is *correct* is not, and ClaimCheck does not pretend to judge it. Closing this tail needs a different trust model (a spec or a human), which is what the oracle layer imports.
+
+## Oracle layer (opt-in)
+
+The battery above proves the PR's tests constrain the change; it still trusts the agent to have asserted the right thing. The oracle layer narrows that gap by importing a correctness signal from a source that is *not* the agent, so ClaimCheck can start catching the first undecidable-tail cheat (a non-vacuous test that asserts the wrong value) on the slice where an independent, machine-checkable signal exists. It never infers that signal from the PR; it runs one the human already wrote.
+
+- **issue-repro (shipped).** A bug-fix PR usually links an issue whose body holds a human-written reproduction, written by the reporter before any fix existed. The oracle extracts a machine-parseable repro, runs it against head to assert the fixed behavior holds, and against parent to corroborate the bug reproduced there. A fix whose own tests pass but which fails the reporter's repro is a wrong-oracle catch, proven against an independent human source: **BLOCK**.
+- **Registered behind the seam, not yet implemented:** metamorphic-relation, differential-on-unchanged-inputs, and property/contract oracles. Each takes its trusted signal as supplied, never inferred from the diff.
+
+The rules match the rest of the tool. The layer is **opt-in and additive**: with no oracle configured and no oracle input, the evidence record is byte-for-byte what it is without the layer and the bundle hash is unchanged; a finding can tighten a verdict but never weaken or replace a battery check. **Deterministic or WARN**: an oracle that cannot evaluate its signal deterministically returns WARN, never a guess. **No freeform-repro guessing**: only a structured, machine-parseable repro (a fenced code block carrying an executable assertion) is run; a repro present but not machine-extractable is WARN ("repro present, not machine-extractable"), never a fabricated assertion. Fetching a linked issue is networked, so it lives only in the live tier; the deterministic core operates on issue text or a repro handed to it.
+
+The load-bearing truth, never overclaimed: importing an oracle moves the trust boundary, it does not delete it. Detection completeness is bounded by oracle completeness. A wrong fix that satisfies every imported relation still passes.
 
 ## Determinism
 
@@ -103,4 +114,4 @@ A target repository is prepared with its own dependencies: a repo that declares 
 
 ## Verdict bundle
 
-Content-addressed and replayable. It records the parent and head SHAs, the changed line ranges, the mutant manifest, the def-use chains, the flagged nondeterminism sources, the regressed and quarantined tests, the per-check results, and the tool version. The bundle hash is a function of those facts, so re-running the same inputs reproduces the same hash.
+Content-addressed and replayable. It records the parent and head SHAs, the changed line ranges, the mutant manifest, the def-use chains, the flagged nondeterminism sources, the regressed and quarantined tests, any oracle findings, the per-check results, and the tool version. The oracle findings field is omitted entirely when no oracle ran, so a run with no oracle hashes identically to one from before the layer existed. The bundle hash is a function of those facts, so re-running the same inputs reproduces the same hash.
