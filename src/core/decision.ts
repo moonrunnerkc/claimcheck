@@ -164,6 +164,20 @@ function isOnCoveredChangedLine(
   );
 }
 
+/**
+ * Does the mutation signal positively show the test constrains the changed
+ * region: at least one live mutant on a covered changed line was killed and
+ * none survived? When this holds, the test demonstrably distinguishes mutations
+ * of the change, so a taint "unreachable" is a measurement gap (a value observed
+ * through a side effect the value-taint did not follow), not a vacuous test.
+ */
+function mutationConstrainsChange(record: EvidenceRecord): boolean {
+  const live = record.mutants.filter(isLiveMutant);
+  const killed = live.filter((m) => m.status === "killed");
+  const survived = live.filter((m) => m.status === "survived");
+  return killed.length > 0 && survived.length === 0;
+}
+
 /** Was any live mutant covering this file/line killed? Used for cross-checking. */
 function killedMutantNear(
   record: EvidenceRecord,
@@ -215,6 +229,23 @@ function checkAssertionReachability(record: EvidenceRecord): CheckResult {
     (t) => !killedMutantNear(record, t),
   );
   if (cleanlyVacuous.length > 0) {
+    // Cross-check at the change level, not just the exact line: if the mutation
+    // signal shows the change is constrained (a mutant killed, none surviving),
+    // taint's "unreachable" is a measurement gap, not a vacuous test, so it is a
+    // disagreement (WARN), never a block. Without a contradicting mutation
+    // signal, taint stands on its own and blocks.
+    if (mutationConstrainsChange(record)) {
+      return {
+        id: "assertion-reachability",
+        tier: "warn",
+        summary:
+          "Taint found a changed expression unreachable by assertions, but the kill-check shows the change is constrained (a mutant was killed and none survived); the value is likely observed through a side effect taint did not follow.",
+        evidence: cleanlyVacuous.map(
+          (t) =>
+            `${t.file}:${t.line}:${t.column} ${t.expression} taint=unreachable mutation=constrained`,
+        ),
+      };
+    }
     return {
       id: "assertion-reachability",
       tier: "block",

@@ -173,6 +173,41 @@ describe("decide", () => {
     expect(verdict.tier).toBe("block");
   });
 
+  it("warns, not blocks, when taint says unreachable but the kill-check shows the change is constrained", () => {
+    // Real-repo case (zustand): the changed value reaches the assertion only
+    // through a side effect (set() -> store state) that value-taint cannot
+    // follow, so taint reports unreachable. But a mutant on the change was
+    // killed and none survived, so the test demonstrably constrains the change.
+    // No block-worthy mutant landed on the exact taint line, so the per-line
+    // cross-check alone would have false-blocked.
+    const vacuous: AssertionReach = { ...reaches(), line: 5, reachesAssertion: false };
+    const killedElsewhere: MutantOutcome = {
+      ...killedNoop(),
+      id: "m-far",
+      startLine: 7,
+      endLine: 7,
+      status: "killed",
+    };
+    const { verdict, check } = findCheck(
+      honestRecord({ taint: [vacuous], mutants: [killedElsewhere] }),
+      "assertion-reachability",
+    );
+    expect(check.tier).toBe("warn");
+    expect(verdict.tier).not.toBe("block");
+  });
+
+  it("still blocks a cleanly vacuous test when no mutation contradicts taint", () => {
+    // A surviving mutant (not killed) provides no positive constraint evidence,
+    // so taint's unreachable stands and blocks.
+    const vacuous: AssertionReach = { ...reaches(), reachesAssertion: false };
+    const survivor: MutantOutcome = { ...killedNoop(), status: "survived" };
+    const { check } = findCheck(
+      honestRecord({ taint: [vacuous], mutants: [survivor] }),
+      "assertion-reachability",
+    );
+    expect(check.tier).toBe("block");
+  });
+
   it("downgrades a taint-vs-kill contradiction to warn instead of resolving it", () => {
     const vacuous: AssertionReach = { ...reaches(), reachesAssertion: false };
     // The killed no-op mutant on the same line contradicts the taint result.
