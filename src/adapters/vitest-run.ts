@@ -16,6 +16,14 @@ export interface TestOutcome {
   /** Fully-qualified test name, stable across runs. */
   readonly name: string;
   readonly status: TestStatus;
+  /**
+   * The runner's failure messages for a failing outcome, empty otherwise. These
+   * let a caller tell a thrown runtime error (the code did not run: a
+   * ReferenceError, a module-resolution failure) apart from an assertion that
+   * ran and failed. Carried because that distinction is the difference between a
+   * meaningful verdict and a hollow one.
+   */
+  readonly failureMessages?: readonly string[];
 }
 
 export interface VitestResult {
@@ -78,6 +86,7 @@ interface AssertionResult {
   fullName?: unknown;
   title?: unknown;
   status?: unknown;
+  failureMessages?: unknown;
 }
 interface FileResult {
   assertionResults?: unknown;
@@ -108,7 +117,12 @@ function parseOutcomes(json: unknown): TestOutcome[] {
           : typeof a.title === "string"
             ? a.title
             : "<unnamed>";
-      outcomes.push({ name, status: normalizeStatus(a.status) });
+      const failureMessages = Array.isArray(a.failureMessages)
+        ? (a.failureMessages as unknown[]).filter(
+            (m): m is string => typeof m === "string",
+          )
+        : [];
+      outcomes.push({ name, status: normalizeStatus(a.status), failureMessages });
     }
   }
   return outcomes.sort((x, y) => x.name.localeCompare(y.name));

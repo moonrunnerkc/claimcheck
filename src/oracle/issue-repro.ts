@@ -1,9 +1,6 @@
-import { rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import type { OracleFinding } from "../core/evidence-record.js";
-import { runVitest, type VitestResult } from "../adapters/vitest-run.js";
-import { scopedSandboxConfig } from "../determinism/sandbox.js";
 import type { Oracle, OracleContext, ReproInput } from "./oracle.js";
+import { runReproOnce } from "./repro-run.js";
 
 /**
  * The issue-repro oracle. A bug-fix PR usually links an issue whose body holds
@@ -26,14 +23,6 @@ import type { Oracle, OracleContext, ReproInput } from "./oracle.js";
  */
 
 export const ISSUE_REPRO_ORACLE_ID = "issue-repro";
-
-/** The filename the synthesized repro test is written to inside a worktree. */
-const REPRO_TEST_FILE = "claimcheck.repro.test.ts";
-/** The scoped vitest config the repro runs under, pinning the sandbox. */
-const REPRO_CONFIG_FILE = "claimcheck.repro.vitest.config.ts";
-
-/** Outcome of executing the repro once: ran-and-passed, ran-and-failed, or could-not-run. */
-type ReproOutcome = "pass" | "fail" | "errored";
 
 /** Result of extracting a repro from the input. */
 type Extraction =
@@ -142,51 +131,6 @@ export function toRunnableTest(code: string): string {
   ].join("\n");
 }
 
-/**
- * Classify a vitest result into a single repro outcome. A run that failed to
- * load, found no test, or produced no outcome is "errored" (never read as a
- * pass): an environmental failure must route to WARN, not a verdict. A run with
- * a failing assertion is "fail"; a run with a passing assertion is "pass".
- */
-function classifyRun(result: VitestResult): ReproOutcome {
-  if (result.failedToRun || result.noTests || result.outcomes.length === 0) {
-    return "errored";
-  }
-  if (result.outcomes.some((o) => o.status === "fail")) return "fail";
-  if (result.outcomes.some((o) => o.status === "pass")) return "pass";
-  return "errored";
-}
-
-/**
- * Run the synthesized repro test once inside a worktree under the sandbox, then
- * remove it so it never leaks into another step's discovery.
- *
- * @param worktreeDir - the worktree to run in; node_modules must be linked.
- * @param testSource - the runnable vitest test source.
- * @returns whether the repro passed, failed, or could not be executed.
- */
-async function runReproOnce(
-  worktreeDir: string,
-  testSource: string,
-): Promise<ReproOutcome> {
-  const testPath = join(worktreeDir, REPRO_TEST_FILE);
-  const configPath = join(worktreeDir, REPRO_CONFIG_FILE);
-  try {
-    await writeFile(testPath, testSource, "utf8");
-    const configBody = await scopedSandboxConfig(worktreeDir, [REPRO_TEST_FILE]);
-    await writeFile(configPath, configBody, "utf8");
-    const result = await runVitest({
-      cwd: worktreeDir,
-      testFiles: [REPRO_TEST_FILE],
-      configFile: REPRO_CONFIG_FILE,
-    });
-    return classifyRun(result);
-  } finally {
-    await rm(testPath, { force: true });
-    await rm(configPath, { force: true });
-  }
-}
-
 /** A short, deterministic excerpt of the repro for replayable evidence. */
 function reproExcerpt(code: string): string {
   const firstReal = code
@@ -208,7 +152,10 @@ function indeterminate(summary: string, evidence: readonly string[]): OracleFind
 /**
  * The issue-repro oracle. Reads the repro from the context, runs it against head
  * twice for stability and once against parent for corroboration, and reports a
- * finding under the standard tiering.
+ * finding under the standard tiering. A repro that threw before exercising the
+ * code under test (a ReferenceError, a module-resolution failure) is classified
+ * errored, never a failed assertion, so it routes to WARN and never to a
+ * violation: reading that throw as a failed invariant is the hollow false-BLOCK.
  *
  * @returns the oracle.
  */
@@ -227,14 +174,15 @@ export function issueReproOracle(): Oracle {
       }
 
       const testSource = toRunnableTest(extracted.code);
+      const excerpt = reproExcerpt(extracted.code);
+
       const headA = await runReproOnce(ctx.headDir, testSource);
       const headB = await runReproOnce(ctx.headDir, testSource);
-      const excerpt = reproExcerpt(extracted.code);
 
       if (headA === "errored" || headB === "errored") {
         return indeterminate(
-          "The reproduction could not be executed deterministically on head; recorded as a warning, never a guess.",
-          [excerpt, `head=${headA}/${headB}`],
+          "The reproduction failed to run on head: it threw before exercising the code under test, rather than running an assertion that failed. Recorded as a warning, never read as a violation.",
+          [excerpt, "head=errored", "repro failed to run, not an assertion failure"],
         );
       }
       if (headA !== headB) {
