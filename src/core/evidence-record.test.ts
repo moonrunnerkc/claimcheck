@@ -101,4 +101,29 @@ describe("hashRecord", () => {
   it("is prefixed with the algorithm name", () => {
     expect(hashRecord(baseRecord())).toMatch(/^sha256:[0-9a-f]{64}$/);
   });
+
+  it("is unchanged by an empty oracleFindings field versus an absent one", () => {
+    const absent = baseRecord();
+    const empty: EvidenceRecord = { ...absent, oracleFindings: [] };
+    expect(hashRecord(empty)).toEqual(hashRecord(absent));
+    expect(canonicalJson(canonicalizeRecord(empty))).toEqual(
+      canonicalJson(canonicalizeRecord(absent)),
+    );
+  });
+
+  it("changes when an oracle finding is recorded", () => {
+    const absent = baseRecord();
+    const withFinding: EvidenceRecord = {
+      ...absent,
+      oracleFindings: [
+        {
+          oracle: "issue-repro",
+          conclusion: "violated",
+          summary: "repro fails on head",
+          evidence: ["head=fail"],
+        },
+      ],
+    };
+    expect(hashRecord(withFinding)).not.toEqual(hashRecord(absent));
+  });
 });

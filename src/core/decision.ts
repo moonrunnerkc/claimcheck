@@ -4,6 +4,7 @@ import type {
   AssertionReach,
   EvidenceRecord,
   MutantOutcome,
+  OracleConclusion,
   StaticTailFinding,
   VacuousAssertion,
 } from "./evidence-record.js";
@@ -566,6 +567,52 @@ function checkQuarantine(record: EvidenceRecord): CheckResult {
   };
 }
 
+/** Map one oracle conclusion to its verdict tier. */
+function tierForConclusion(conclusion: OracleConclusion): VerdictTier {
+  switch (conclusion) {
+    case "violated":
+      return "block";
+    case "indeterminate":
+      return "warn";
+    case "satisfied":
+      return "pass";
+  }
+}
+
+/**
+ * oracle. Surfaces the oracle layer's findings under the same tiering as every
+ * other check. A `violated` finding is a provable lie against an independent
+ * source, so it is BLOCK; `indeterminate` is WARN; `satisfied` is PASS.
+ *
+ * Returns null when no oracle produced a finding, so the check is absent from
+ * the verdict and a no-oracle run is byte-for-byte what it was before the layer
+ * existed. The check is additive: it only ever raises the tier under
+ * block-precedence, never lowers it.
+ *
+ * @param record - the canonical evidence record.
+ * @returns the oracle check, or null when no oracle ran.
+ */
+function checkOracles(record: EvidenceRecord): CheckResult | null {
+  const findings = record.oracleFindings ?? [];
+  if (findings.length === 0) return null;
+  const tier = worstTier(findings.map((f) => tierForConclusion(f.conclusion)));
+  const violated = findings.filter((f) => f.conclusion === "violated");
+  const indeterminate = findings.filter(
+    (f) => f.conclusion === "indeterminate",
+  );
+  const summary =
+    violated.length > 0
+      ? "An imported oracle is violated on head: the change fails a correctness signal the agent did not write."
+      : indeterminate.length > 0
+        ? "An imported oracle could not be evaluated deterministically; recorded as a warning, not a guess."
+        : "Every imported oracle is satisfied on head.";
+  const evidence = findings.flatMap((f) => [
+    `${f.oracle}: ${f.conclusion} - ${f.summary}`,
+    ...f.evidence.map((e) => `${f.oracle}: ${e}`),
+  ]);
+  return { id: "oracle", tier, summary, evidence };
+}
+
 /**
  * Compute the verdict from the canonical evidence record. Pure and total: the
  * verdict tier is the worst tier across every check under block-precedence, and
@@ -575,7 +622,7 @@ function checkQuarantine(record: EvidenceRecord): CheckResult {
  * @returns the verdict: tier, per-check results, and the bundle hash.
  */
 export function decide(record: EvidenceRecord): Verdict {
-  const checks: readonly CheckResult[] = [
+  const battery: CheckResult[] = [
     checkPassesOnHead(record),
     checkTestTouchesCode(record),
     checkFailsOnParent(record),
@@ -588,6 +635,12 @@ export function decide(record: EvidenceRecord): Verdict {
     checkTestWeakening(record),
     checkQuarantine(record),
   ];
+  // The oracle check is appended only when an oracle produced a finding, so a
+  // run with no oracle yields exactly the battery above, unchanged.
+  const oracle = checkOracles(record);
+  const checks: readonly CheckResult[] = oracle
+    ? [...battery, oracle]
+    : battery;
   const tier: VerdictTier = worstTier(checks.map((c) => c.tier));
   return {
     tier,

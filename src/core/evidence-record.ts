@@ -101,6 +101,37 @@ export interface QuarantineNote {
 }
 
 /**
+ * The conclusion an oracle reached by running an independent correctness signal
+ * against the change. The trust comes from the source (a human-written
+ * reproduction, a metamorphic relation, a contract), not from the agent.
+ *
+ * - `satisfied`: the imported signal holds on head. Contributes PASS.
+ * - `violated`: the imported signal fails on head. The change does not satisfy
+ *   a source the agent did not write, so it is a provable lie: BLOCK.
+ * - `indeterminate`: the signal was present but could not be evaluated
+ *   deterministically (not machine-extractable, nondeterministic, or it failed
+ *   to execute). WARN, never a guess.
+ *
+ * An oracle that is not configured or has no input contributes no finding at
+ * all, so the record stays byte-for-byte identical to a run with no oracle.
+ */
+export type OracleConclusion = "satisfied" | "violated" | "indeterminate";
+
+/**
+ * One oracle's recorded result. The decision layer maps {@link OracleConclusion}
+ * to a verdict tier; the oracle records only the facts it observed by running.
+ */
+export interface OracleFinding {
+  /** Stable oracle id, for example "issue-repro". */
+  readonly oracle: string;
+  readonly conclusion: OracleConclusion;
+  /** One line stating what the oracle ran and what it found, for a human. */
+  readonly summary: string;
+  /** Concrete, replayable evidence: the repro source, the observed outcomes. */
+  readonly evidence: readonly string[];
+}
+
+/**
  * The single source of truth for the verdict. Normalized and sorted so equal
  * facts always serialize identically. Nothing outside this record may
  * influence {@link import("./decision.js").decide}.
@@ -140,6 +171,14 @@ export interface EvidenceRecord {
    */
   readonly vacuousAssertions: readonly VacuousAssertion[];
   readonly quarantined: readonly QuarantineNote[];
+  /**
+   * Findings from the oracle layer: correctness signal imported from a source
+   * that is not the agent. Optional and additive. The field is omitted entirely
+   * when no oracle produced a finding, so a run with no oracle configured (the
+   * offline corpus, every legacy run) serializes byte-for-byte as it did before
+   * the layer existed, and the bundle hash is unchanged.
+   */
+  readonly oracleFindings?: readonly OracleFinding[];
   readonly toolVersion: string;
 }
 
@@ -221,12 +260,26 @@ function compareRange(a: LineRange, b: LineRange): number {
  * @returns a new record with every collection sorted deterministically.
  */
 export function canonicalizeRecord(record: EvidenceRecord): EvidenceRecord {
+  // The oracle findings field is included only when it carries findings. An
+  // omitted key and a `[]` value serialize differently, so a run with no oracle
+  // must omit the key to stay byte-identical to a pre-oracle record.
+  const oracle =
+    record.oracleFindings && record.oracleFindings.length > 0
+      ? {
+          oracleFindings: [...record.oracleFindings].sort((a, b) =>
+            a.oracle.localeCompare(b.oracle) ||
+            a.conclusion.localeCompare(b.conclusion) ||
+            a.summary.localeCompare(b.summary),
+          ),
+        }
+      : {};
   return {
     baseSha: record.baseSha,
     headSha: record.headSha,
     headTestsPass: record.headTestsPass,
     failsOnParent: record.failsOnParent,
     toolVersion: record.toolVersion,
+    ...oracle,
     changedRanges: [...record.changedRanges].sort(compareRange),
     coveredChangedLines: [...record.coveredChangedLines].sort(compareRange),
     mutants: [...record.mutants].sort((a, b) => a.id.localeCompare(b.id)),

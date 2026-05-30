@@ -443,4 +443,81 @@ describe("decide", () => {
     expect(first).toEqual(second);
     expect(first.bundleHash).toEqual(second.bundleHash);
   });
+
+  it("emits no oracle check when no oracle produced a finding", () => {
+    const verdict = decide(honestRecord());
+    expect(verdict.checks.some((c) => c.id === "oracle")).toBe(false);
+  });
+
+  it("blocks when an oracle is violated on head", () => {
+    const { verdict, check } = findCheck(
+      honestRecord({
+        oracleFindings: [
+          {
+            oracle: "issue-repro",
+            conclusion: "violated",
+            summary: "the reporter's repro fails on head",
+            evidence: ["head=fail", "parent=fail"],
+          },
+        ],
+      }),
+      "oracle",
+    );
+    expect(check.tier).toBe("block");
+    expect(verdict.tier).toBe("block");
+  });
+
+  it("warns when an oracle could not be evaluated deterministically", () => {
+    const { verdict, check } = findCheck(
+      honestRecord({
+        oracleFindings: [
+          {
+            oracle: "issue-repro",
+            conclusion: "indeterminate",
+            summary: "repro present, not machine-extractable",
+            evidence: [],
+          },
+        ],
+      }),
+      "oracle",
+    );
+    expect(check.tier).toBe("warn");
+    expect(verdict.tier).toBe("warn");
+  });
+
+  it("keeps the verdict a pass when the only oracle is satisfied", () => {
+    const { verdict, check } = findCheck(
+      honestRecord({
+        oracleFindings: [
+          {
+            oracle: "issue-repro",
+            conclusion: "satisfied",
+            summary: "the reporter's repro passes on head and failed on parent",
+            evidence: ["head=pass", "parent=fail"],
+          },
+        ],
+      }),
+      "oracle",
+    );
+    expect(check.tier).toBe("pass");
+    expect(verdict.tier).toBe("pass");
+  });
+
+  it("never lets a satisfied oracle lower an existing block", () => {
+    const survivor: MutantOutcome = { ...killedNoop(), status: "survived" };
+    const verdict = decide(
+      honestRecord({
+        mutants: [survivor],
+        oracleFindings: [
+          {
+            oracle: "issue-repro",
+            conclusion: "satisfied",
+            summary: "repro passes on head",
+            evidence: [],
+          },
+        ],
+      }),
+    );
+    expect(verdict.tier).toBe("block");
+  });
 });
