@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /**
@@ -122,20 +122,111 @@ pin(globalThis, "fetch", function fetch() {
 });
 `;
 
-/** Build the vitest config that loads the sandbox setup before every test. */
-function configBody(include?: readonly string[]): string {
+/** Candidate names for a target repo's own vitest/vite config, in precedence. */
+const REPO_CONFIG_BASENAMES = ["vitest.config", "vite.config"] as const;
+const REPO_CONFIG_EXTS = ["ts", "mts", "cts", "js", "mjs", "cjs"] as const;
+
+/** Does a path exist? */
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Find the target repository's own vitest or vite config in a worktree, if any.
+ * ClaimCheck's own generated configs are prefixed and never match these exact
+ * names, so detection never picks them up.
+ *
+ * @param worktreeDir - the worktree to look in.
+ * @returns the repo-relative config filename, or null when the repo has none.
+ */
+export async function detectRepoVitestConfig(
+  worktreeDir: string,
+): Promise<string | null> {
+  for (const base of REPO_CONFIG_BASENAMES) {
+    for (const ext of REPO_CONFIG_EXTS) {
+      const name = `${base}.${ext}`;
+      if (await exists(join(worktreeDir, name))) return name;
+    }
+  }
+  return null;
+}
+
+export interface VitestConfigOptions {
+  /** Setup files to load (the sandbox, plus taint when instrumenting). */
+  readonly setupFiles: readonly string[];
+  /** Test files to scope the run to; omitted runs are scoped by positional args. */
+  readonly include?: readonly string[];
+}
+
+/** The standalone config used when the repo declares no vitest config. */
+function standaloneConfigBody(opts: VitestConfigOptions): string {
   const includeLine =
-    include && include.length > 0
-      ? `    include: ${JSON.stringify([...include])},\n`
+    opts.include && opts.include.length > 0
+      ? `    include: ${JSON.stringify([...opts.include])},\n`
       : "";
+  const setup = JSON.stringify(opts.setupFiles.map((f) => `./${f}`));
   return `import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
-    setupFiles: ["./${SANDBOX_SETUP_FILE}"],
+    setupFiles: ${setup},
 ${includeLine}    pool: "forks",
   },
 });
 `;
+}
+
+/**
+ * The extending config used when the repo has its own vitest config. It merges
+ * ClaimCheck's needs on top of the repo's config rather than replacing it, so
+ * the repo's aliases, environment, transforms, and setup files stay in effect
+ * and the verdict reflects the repo's real test behavior. The sandbox setup is
+ * appended to the repo's setup files; the run is scoped by overriding the test
+ * directory to the root so the explicit include resolves there.
+ */
+function extendingConfigBody(
+  repoConfig: string,
+  opts: VitestConfigOptions,
+): string {
+  const setup = JSON.stringify(opts.setupFiles.map((f) => `./${f}`));
+  const scope =
+    opts.include && opts.include.length > 0
+      ? `      dir: ".",\n      include: ${JSON.stringify([...opts.include])},\n`
+      : "";
+  return `import { defineConfig, mergeConfig } from "vitest/config";
+import repoConfig from "./${repoConfig}";
+export default defineConfig(async (env) => {
+  const base = typeof repoConfig === "function" ? await repoConfig(env) : repoConfig;
+  return mergeConfig(base, {
+    test: {
+      setupFiles: ${setup},
+${scope}      pool: "forks",
+    },
+  });
+});
+`;
+}
+
+/**
+ * Build the vitest config body for a worktree. When the repo has its own config
+ * the result extends it; otherwise it is the standalone sandbox config.
+ *
+ * @param worktreeDir - the worktree the config will run in.
+ * @param opts - setup files to load and an optional include scope.
+ * @returns the config file contents.
+ */
+export async function composeVitestConfig(
+  worktreeDir: string,
+  opts: VitestConfigOptions,
+): Promise<string> {
+  const repoConfig = await detectRepoVitestConfig(worktreeDir);
+  return repoConfig
+    ? extendingConfigBody(repoConfig, opts)
+    : standaloneConfigBody(opts);
 }
 
 /**
@@ -158,22 +249,29 @@ export async function prepareSandbox(
   worktreeDir: string,
 ): Promise<{ configFile: string; setupFile: string }> {
   await writeSandboxSetup(worktreeDir);
-  await writeFile(
-    join(worktreeDir, SANDBOX_CONFIG_FILE),
-    configBody(),
-    "utf8",
-  );
+  const body = await composeVitestConfig(worktreeDir, {
+    setupFiles: [SANDBOX_SETUP_FILE],
+  });
+  await writeFile(join(worktreeDir, SANDBOX_CONFIG_FILE), body, "utf8");
   return { configFile: SANDBOX_CONFIG_FILE, setupFile: SANDBOX_SETUP_FILE };
 }
 
 /**
  * Build a scoped vitest config body that loads the sandbox and restricts the
  * test set, used by the mutation runner so a deliberately regressed sibling
- * test never enters Stryker's initial run.
+ * test never enters Stryker's initial run. Extends the repo's own config when
+ * present so mutants run under the repo's real test environment.
  *
+ * @param worktreeDir - the worktree the config will run in.
  * @param include - the test files to include.
  * @returns the config file contents.
  */
-export function scopedSandboxConfig(include: readonly string[]): string {
-  return configBody(include);
+export async function scopedSandboxConfig(
+  worktreeDir: string,
+  include: readonly string[],
+): Promise<string> {
+  return composeVitestConfig(worktreeDir, {
+    setupFiles: [SANDBOX_SETUP_FILE],
+    include,
+  });
 }

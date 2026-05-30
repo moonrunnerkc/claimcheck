@@ -129,7 +129,8 @@ export async function runStryker(
   // baseline. Other tests in the repo (including ones the PR deliberately
   // regresses) must not enter Stryker's initial run, or a pre-existing failure
   // would abort it.
-  const vitestConfig = scopedSandboxConfig(
+  const vitestConfig = await scopedSandboxConfig(
+    options.worktreeDir,
     options.testFiles.length > 0 ? options.testFiles : ["**/*.{test,spec}.*"],
   );
   const config = {

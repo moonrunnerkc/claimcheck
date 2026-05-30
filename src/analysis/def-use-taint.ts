@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssertionReach, LineRange } from "../core/evidence-record.js";
 import { runVitest } from "../adapters/vitest-run.js";
-import { SANDBOX_SETUP_FILE, writeSandboxSetup } from "../determinism/sandbox.js";
+import {
+  SANDBOX_SETUP_FILE,
+  composeVitestConfig,
+  writeSandboxSetup,
+} from "../determinism/sandbox.js";
 import { instrumentSource, instrumentTest, type TrackedExpr } from "./instrument.js";
 
 /**
@@ -112,9 +116,12 @@ export async function runTaint(
 
   await writeSandboxSetup(options.worktreeDir);
   await writeFile(join(options.worktreeDir, TAINT_SETUP_FILE), TAINT_SETUP_BODY, "utf8");
-  const configBody = `import { defineConfig } from "vitest/config";\nexport default defineConfig({ test: { setupFiles: ["./${SANDBOX_SETUP_FILE}", "./${TAINT_SETUP_FILE}"], include: ${JSON.stringify(
-    [...options.testFiles],
-  )}, pool: "forks" } });\n`;
+  // Extend the repo's own config (when present) so taint runs under the repo's
+  // real environment, with both the sandbox and the taint setup appended.
+  const configBody = await composeVitestConfig(options.worktreeDir, {
+    setupFiles: [SANDBOX_SETUP_FILE, TAINT_SETUP_FILE],
+    include: options.testFiles,
+  });
   const configName = "claimcheck.taint.config.ts";
   await writeFile(join(options.worktreeDir, configName), configBody, "utf8");
 
