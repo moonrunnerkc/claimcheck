@@ -50,6 +50,30 @@ export interface VitestRunOptions {
   readonly timeoutMs?: number;
 }
 
+/**
+ * Decide whether a head run counts as passes-on-head. This is the single guard
+ * against the hollow-PASS bug: a run that found no tests, failed to load, or had
+ * no active test files is never a pass, regardless of an empty outcome set. Only
+ * a run with active tests, that loaded, and whose non-quarantined outcomes
+ * contain no failure passes. Pure so the invariant is testable without a runner.
+ *
+ * @param run - the parsed runner result.
+ * @param activeTestCount - number of non-quarantined test files that were run.
+ * @param flakyNames - names of tests quarantined as flaky, excluded from the check.
+ * @returns true only when the head tests demonstrably passed.
+ */
+export function headRunPasses(
+  run: VitestResult,
+  activeTestCount: number,
+  flakyNames: ReadonlySet<string>,
+): boolean {
+  if (activeTestCount === 0) return false;
+  if (run.noTests) return false;
+  if (run.failedToRun) return false;
+  const trusted = run.outcomes.filter((o) => !flakyNames.has(o.name));
+  return !trusted.some((o) => o.status === "fail");
+}
+
 interface AssertionResult {
   fullName?: unknown;
   title?: unknown;

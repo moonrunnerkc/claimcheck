@@ -26,6 +26,7 @@ import { scanVacuousAssertions } from "../checks/vacuous-assertion.js";
 import { compareTestFile } from "../checks/test-weakening.js";
 import { findToolchainModules } from "../adapters/toolchain.js";
 import { collectCoverage, intersectChangedLines } from "../coverage/collect.js";
+import { headRunPasses } from "../adapters/vitest-run.js";
 import { runFailsOnParent } from "../checks/fails-on-parent.js";
 import { runStryker } from "../mutation/stryker-runner.js";
 import { toMutateRanges } from "../mutation/mutant-select.js";
@@ -178,14 +179,11 @@ export async function runPipeline(
       activeTestFiles,
       configFile,
     );
-    const trustedOutcomes = coverage.run.outcomes.filter(
-      (o) => !flakyNames.has(o.name),
+    const headTestsPass = headRunPasses(
+      coverage.run,
+      activeTestFiles.length,
+      flakyNames,
     );
-    const headTestsPass =
-      activeTestFiles.length > 0 &&
-      !coverage.run.noTests &&
-      !coverage.run.failedToRun &&
-      !trustedOutcomes.some((o) => o.status === "fail");
     const coveredChangedLines = intersectChangedLines(
       changedRanges,
       coverage.coveredLines,
