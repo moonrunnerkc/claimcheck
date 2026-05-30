@@ -1,4 +1,5 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
+import { cpus } from "node:os";
 import { join } from "node:path";
 import { exec } from "../util/exec.js";
 import type { MutantOutcome, MutantStatus } from "../core/evidence-record.js";
@@ -22,6 +23,24 @@ export interface StrykerRunOptions {
   /** Extra environment, for example the sandbox preload. */
   readonly env?: Readonly<Record<string, string>>;
   readonly timeoutMs?: number;
+  /** Override the worker count; defaults to {@link defaultConcurrency}. */
+  readonly concurrency?: number;
+}
+
+/**
+ * Choose how many Stryker workers to run. Mutants are independent and each runs
+ * in its own sandbox, so concurrency changes only the runtime, never the
+ * verdict: a mutant's kill/survive outcome does not depend on how many of its
+ * siblings run alongside it, and the evidence record sorts mutants by id. The
+ * count is clamped to leave a core for the host and capped so a large CI runner
+ * does not spawn an unbounded pool.
+ *
+ * @param cpuCount - the number of logical CPUs available.
+ * @returns a worker count in [1, 4].
+ */
+export function defaultConcurrency(cpuCount: number): number {
+  if (!Number.isFinite(cpuCount) || cpuCount <= 1) return 1;
+  return Math.max(1, Math.min(4, Math.floor(cpuCount) - 1));
 }
 
 interface SchemaLocation {
@@ -118,7 +137,7 @@ export async function runStryker(
     coverageAnalysis: "perTest",
     mutate: [...options.mutateRanges],
     reporters: ["json"],
-    concurrency: 1,
+    concurrency: options.concurrency ?? defaultConcurrency(cpus().length),
     timeoutMS: 60_000,
     disableTypeChecks: true,
     tempDirName: ".stryker-tmp",

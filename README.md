@@ -18,7 +18,7 @@ The three mechanical cheats it does catch:
 
 - **PASS.** Every check passed. The tests demonstrably constrain the claimed change and nothing that worked before is broken.
 - **WARN.** A signal is present but ambiguous, or a check could not run deterministically. Annotates the PR; does not fail the gate.
-- **BLOCK.** A check produced an unambiguous failure provable from the run alone: a no-op or condition-inverting mutant surviving on a covered changed line, a covered changed line with no mutant the test catches, a regression on a stable test, or a weakened existing assertion.
+- **BLOCK.** A check produced an unambiguous failure provable from the run alone: a no-op or condition-inverting mutant surviving on a covered changed line, a covered changed line with no mutant the test catches, a regression on a stable test, a weakened existing assertion, a coverage-ignore on a changed line that taint proves no assertion observes, or a test that mocks the changed module while no changed line runs.
 
 BLOCK is reserved for a provable lie. When in doubt, the verdict is WARN. A false block costs more than a missed cheat.
 
@@ -31,9 +31,21 @@ BLOCK is reserved for a provable lie. When in doubt, the verdict is WARN. A fals
 - **kill-check**: Stryker mutates the covered changed lines; a surviving no-op/inversion mutant, or a line whose mutants all survive, means the test does not constrain the fix.
 - **regression**: the parent tests the PR did not touch must still pass on head.
 - **error-suppression**: swallowed exceptions and success-on-error-path returns on the changed lines.
+- **static-tail**: coverage-ignore markers (istanbul/c8/v8/node:coverage), type-checker suppression (`@ts-ignore`/`@ts-nocheck`/`@ts-expect-error`), and `any` widening on the changed lines, plus parent-vs-head config weakening (lowered coverage thresholds, narrowed CI matrices), dropped `await`, and loosened `toBeCloseTo` tolerance. WARN by default; a coverage-ignore that taint confirms unconstrained escalates to BLOCK.
+- **vacuous-assertion**: mock-the-SUT, snapshot acceptance over changed output, and tautologies in the new tests. WARN by default; mocking the changed module while no changed line runs escalates to BLOCK.
 - **test-weakening**: existing assertions loosened, removed, or skipped to fit the change.
 
-assertion-reachability and the kill-check are two independent methods for the same property; they are cross-checked, and disagreement is surfaced as WARN rather than resolved silently.
+assertion-reachability and the kill-check are two independent methods for the same property; they are cross-checked, and disagreement is surfaced as WARN rather than resolved silently. The static-tail and vacuous-assertion checks surface the soft cheats that are decidable from the diff alone; each lands on the reviewer's diff as a per-line annotation (`--annotations github`).
+
+## The undecidable tail (permanent scope)
+
+Three cheats are out of scope by design, not for lack of time. Each needs an oracle for the intended behavior, and inferring that oracle from the PR alone reintroduces exactly the model-guessing ClaimCheck refuses to do. By Rice's theorem there is no sound, general procedure that decides them from the code under test:
+
+- **wrong-cap / wrong-constant**: the test asserts a specific expected value, but that value is itself wrong. The test is non-vacuous and kills mutants; only a trusted specification knows the number should have been different.
+- **snapshot of broken output**: a snapshot faithfully records the changed code's output, which happens to be the buggy output. The assertion is real; whether the captured value is correct is the open question.
+- **exit-0-while-failed**: a test harness that reports success regardless of the assertions. Distinguishing a genuinely passing run from a rigged one requires trusting the very harness under suspicion.
+
+ClaimCheck never claims to catch these and never silently passes them off as caught. The static-tail and vacuous-assertion checks deliberately stop at the decidable boundary: a *snapshot matcher over changed output* is flagged as a WARN (the pattern is decidable), but whether the captured value is *correct* is not, and ClaimCheck does not pretend to judge it. Closing this tail is a different tool with a different trust model (a spec or a human), not a future ClaimCheck check.
 
 ## Determinism
 

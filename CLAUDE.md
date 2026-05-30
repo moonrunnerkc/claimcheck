@@ -12,6 +12,10 @@ ClaimCheck proves whether a PR's tests actually constrain the change the PR clai
 
 Never write code, a comment, a log line, a doc, or a commit message that claims or implies more than that. A plausible-but-wrong fix with no failing invariant and no surviving mutant on the changed lines will pass, and that is acceptable and stated openly. Overclaiming is the failure mode that ends this project.
 
+### The undecidable tail is permanent scope, not a backlog item
+
+Three cheats are out of scope forever, not just for v0.1: wrong-cap (the test asserts a wrong-but-specific expected value), snapshot-of-broken-output (a snapshot faithfully records buggy output), and exit-0-while-failed (a harness that reports success regardless of assertions). Each requires an oracle for the intended behavior; inferring that oracle from the PR alone is the model-guessing this tool exists to avoid, and by Rice's theorem no sound general decider exists. Do not build checks that target this bucket. Detect the *decidable surface* near it (a snapshot matcher over changed output is a WARN-able pattern) but never judge whether the captured value is correct, and never imply the bucket is covered.
+
 ## Prime directives
 
 1. **Determinism is the product.** A non-deterministic verdict is a defect. The same inputs must always produce the same verdict and the same bundle hash. Flaky tests are quarantined and never affect a verdict. If you cannot make a check deterministic, it returns WARN, not a guess.
