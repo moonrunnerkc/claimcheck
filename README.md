@@ -94,6 +94,13 @@ The Action runs in a hermetic container, writes the verdict to the job summary, 
 
 TypeScript and JavaScript repositories using vitest, fix-mode claims. The language-adapter seam exists so a Python adapter is an addition rather than a rewrite. Claim classification, feature-add and refactor modes, and other languages are out of scope for v0.1.
 
+A target repository is prepared with its own dependencies: a repo that declares dependencies is installed with its own lockfile (`npm ci`, or `npm install` when the lockfile is not npm's), and ClaimCheck's mutation tooling is overlaid so the kill-check runs against the repo's own vitest. A dependency-free repository (the corpus) borrows ClaimCheck's toolchain by symlink and stays offline.
+
+## Testing tiers
+
+- **Hermetic suite** (`npm test`, `npm run eval`): offline and deterministic. It runs against the synthetic corpus and the unit/integration checks, never touches the network, and is where the determinism guarantee and BLOCK precision are measured.
+- **Live tier** (`npm run test:live`): networked and explicitly NOT part of the determinism guarantee. It clones a real external vitest repository and runs ClaimCheck against a historical fix PR via that repo's own install and test command. It needs network and a Node version compatible with the repo's vitest. The default suite excludes it (`*.live.test.ts`).
+
 ## Verdict bundle
 
 Content-addressed and replayable. It records the parent and head SHAs, the changed line ranges, the mutant manifest, the def-use chains, the flagged nondeterminism sources, the regressed and quarantined tests, the per-check results, and the tool version. The bundle hash is a function of those facts, so re-running the same inputs reproduces the same hash.
