@@ -57,6 +57,10 @@ function classify(node: ts.Node): NdKind | null {
     if (dotted === "performance.now") return "high-res-timer";
     if (dotted === "process.hrtime") return "high-res-timer";
     if (dotted === "Math.random") return "unseeded-random";
+    // The sandbox pins the Web Crypto globals; only these are controlled, not
+    // node:crypto module exports, which it cannot replace.
+    if (dotted === "crypto.randomUUID") return "unseeded-random";
+    if (dotted === "crypto.getRandomValues") return "unseeded-random";
     if (ts.isIdentifier(callee)) {
       if (callee.text === "setTimeout" || callee.text === "setInterval") {
         return "timer-scheduling";

@@ -11,7 +11,8 @@ export type CaseLabel =
   | "error-hider"
   | "flaky"
   | "equivalent-mutant"
-  | "test-weakening";
+  | "test-weakening"
+  | "soft-tail";
 
 /** A corpus case as loaded from disk. */
 export interface CorpusCase {

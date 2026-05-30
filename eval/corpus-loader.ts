@@ -17,6 +17,7 @@ const VALID_LABELS: ReadonlySet<CaseLabel> = new Set([
   "flaky",
   "equivalent-mutant",
   "test-weakening",
+  "soft-tail",
 ]);
 const VALID_TIERS: ReadonlySet<VerdictTier> = new Set(["pass", "warn", "block"]);
 

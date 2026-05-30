@@ -74,6 +74,47 @@ if (globalThis.performance && typeof globalThis.performance.now === "function") 
   });
 }
 
+// Seeded counter shared by the crypto pins, independent of Math.random's state
+// so instrumentation order does not couple the two streams.
+let __cryptoSeed = 0x9e3779b9;
+function __cryptoByte() {
+  __cryptoSeed = (__cryptoSeed + 0x6d2b79f5) | 0;
+  let t = Math.imul(__cryptoSeed ^ (__cryptoSeed >>> 15), 1 | __cryptoSeed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return (t ^ (t >>> 14)) & 0xff;
+}
+// crypto.getRandomValues is a non-configurable own property and crypto.subtle
+// carries a brand check, so the two random methods cannot be shadowed in place.
+// globalThis.crypto itself is configurable, so pin a Proxy that overrides the
+// two random sources and delegates everything else to the real Crypto with the
+// correct receiver, leaving subtle and the rest intact.
+const __realCrypto = globalThis.crypto;
+if (__realCrypto && typeof __realCrypto.getRandomValues === "function") {
+  let __uuid = 0;
+  function detRandomUUID() {
+    __uuid += 1;
+    const tail = __uuid.toString(16).padStart(12, "0").slice(-12);
+    // A fixed, valid v4-shaped UUID whose only varying field is a counter, so
+    // successive calls are distinct yet identical across runs.
+    return "00000000-0000-4000-8000-" + tail;
+  }
+  function detGetRandomValues(buffer) {
+    if (buffer && typeof buffer.length === "number") {
+      for (let i = 0; i < buffer.length; i++) buffer[i] = __cryptoByte();
+    }
+    return buffer;
+  }
+  const pinnedCrypto = new Proxy(__realCrypto, {
+    get(target, prop, receiver) {
+      if (prop === "getRandomValues") return detGetRandomValues;
+      if (prop === "randomUUID") return detRandomUUID;
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  pin(globalThis, "crypto", pinnedCrypto);
+}
+
 pin(globalThis, "fetch", function fetch() {
   throw new Error(
     "claimcheck-sandbox: live network access is denied; record a fixture or the test is quarantined",

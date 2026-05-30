@@ -82,6 +82,24 @@ describe("runPipeline against the corpus", () => {
     expect(record.quarantined[0]?.reason).toContain("network");
   }, 180_000);
 
+  it("warns on a correct fix that carries a @ts-ignore on the changed line", async () => {
+    const { verdict } = await run("type-suppression-tail");
+    expect(verdict.tier).toBe("warn");
+    const tail = verdict.checks.find((c) => c.id === "static-tail");
+    expect(tail?.tier).toBe("warn");
+    expect(tail?.evidence.join(" ")).toContain("type-suppression");
+    // The decisive checks still pass: nothing here is a provable lie.
+    expect(verdict.checks.find((c) => c.id === "kill-check")?.tier).not.toBe("block");
+  }, 180_000);
+
+  it("blocks a test that mocks the changed module so the fix never runs", async () => {
+    const { verdict } = await run("mock-the-sut");
+    expect(verdict.tier).toBe("block");
+    const vacuous = verdict.checks.find((c) => c.id === "vacuous-assertion");
+    expect(vacuous?.tier).toBe("block");
+    expect(vacuous?.evidence.join(" ")).toContain("mock-the-sut");
+  }, 180_000);
+
   it("reproduces an identical bundle hash across reruns", async () => {
     const first = await run("honest-discount");
     const second = await run("honest-discount");

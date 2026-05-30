@@ -1,0 +1,6 @@
+{
+  "label": "vacuous",
+  "expectedTier": "block",
+  "mode": "fix",
+  "description": "discountedTotal is fixed, but the test mocks the very module under test and asserts on the mock's return value, so the real changed code never runs. No changed line is covered. mock-the-sut on the changed module plus zero covered changed lines is the provable conjunction and is BLOCK."
+}

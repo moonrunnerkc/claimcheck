@@ -1,0 +1,6 @@
+{
+  "label": "soft-tail",
+  "expectedTier": "warn",
+  "mode": "fix",
+  "description": "applyDiscount is fixed correctly and the test pins the discounted value, so the decisive checks pass. But the fix line carries a @ts-ignore, silencing the type checker exactly where the change is. The static-tail scan flags the suppression as WARN; nothing escalates it, so the verdict is WARN, not BLOCK."
+}
