@@ -40,6 +40,9 @@ import { runTaint } from "../analysis/def-use-taint.js";
 import { classifyMutants } from "../analysis/mutant-equivalence.js";
 import { revParse } from "../git/git.js";
 import { AnalysisCache, contentKey } from "../cache/analysis-cache.js";
+import type { Oracle, PrMetadata, ReproInput } from "../oracle/oracle.js";
+import { runOracles } from "../oracle/oracle.js";
+import type { OracleFinding } from "./evidence-record.js";
 
 /**
  * The pipeline orchestrates the check battery and fills the canonical evidence
@@ -56,6 +59,17 @@ export interface PipelineOptions {
   readonly claim: Claim;
   /** When set, cache and reuse the bundle for identical (base, head, version). */
   readonly cacheDir?: string;
+  /**
+   * Oracles to run after the battery, before taint rewrites the worktree. When
+   * absent or empty, no oracle runs and the record is byte-for-byte identical to
+   * a pre-oracle run. Purely additive: oracle findings can tighten the verdict,
+   * never weaken it.
+   */
+  readonly oracles?: readonly Oracle[];
+  /** The reproduction or issue text an oracle evaluates; absent means none. */
+  readonly reproInput?: ReproInput;
+  /** PR provenance an oracle may use to locate its external source. */
+  readonly prMetadata?: PrMetadata;
 }
 
 export interface PipelineResult {
@@ -283,6 +297,29 @@ export async function runPipeline(
       );
     }
 
+    // Oracle layer: import a correctness signal that is not the agent's own
+    // tests. Runs before taint because the repro executes the worktree's real
+    // source, and taint rewrites that source in place. Skipped entirely when no
+    // oracle is configured, so the record stays byte-for-byte unchanged.
+    let oracleFindings: OracleFinding[] | undefined;
+    if (options.oracles && options.oracles.length > 0) {
+      const findings = await runOracles(options.oracles, {
+        parentDir: worktrees.parentDir,
+        headDir: worktrees.headDir,
+        baseSha: worktrees.baseSha,
+        headSha: worktrees.headSha,
+        changedRanges,
+        configFile,
+        prMetadata: options.prMetadata ?? {
+          owner: null,
+          repo: null,
+          issueNumber: null,
+        },
+        reproInput: options.reproInput ?? null,
+      });
+      if (findings.length > 0) oracleFindings = findings;
+    }
+
     // Assertion-reachability by def-use taint. Runs last because it rewrites
     // source and test files in place; nothing reads the worktree after it.
     const taint =
@@ -311,6 +348,7 @@ export async function runPipeline(
       staticTail,
       vacuousAssertions,
       quarantined,
+      ...(oracleFindings ? { oracleFindings } : {}),
       toolVersion: TOOL_VERSION,
     };
 
