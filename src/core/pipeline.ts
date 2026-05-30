@@ -180,6 +180,7 @@ export async function runPipeline(
     const headTestsPass =
       activeTestFiles.length > 0 &&
       !coverage.run.noTests &&
+      !coverage.run.failedToRun &&
       !trustedOutcomes.some((o) => o.status === "fail");
     const coveredChangedLines = intersectChangedLines(
       changedRanges,

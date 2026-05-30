@@ -23,6 +23,14 @@ export interface VitestResult {
   readonly passed: boolean;
   /** True when vitest found no test files to run. */
   readonly noTests: boolean;
+  /**
+   * True when the runner exited non-zero and produced no test outcomes, and it
+   * was not a clean "no test files" result: the suite failed to load or
+   * collect (a missing dependency, a transform error, a config error). This is
+   * distinct from a test failing; it means the run never happened, so the
+   * caller must not read the empty outcome set as a pass.
+   */
+  readonly failedToRun: boolean;
   readonly outcomes: readonly TestOutcome[];
   readonly exitCode: number;
   readonly stderr: string;
@@ -143,10 +151,16 @@ export async function runVitest(
       );
     const passed =
       result.code === 0 && !outcomes.some((o) => o.status === "fail");
+    // A non-zero exit with no outcomes that is not a clean "no test files"
+    // result means the suite could not load or collect. Surfacing this stops a
+    // load error from masquerading as a pass via an empty outcome set.
+    const failedToRun =
+      result.code !== 0 && outcomes.length === 0 && !noTests;
 
     return {
       passed,
       noTests,
+      failedToRun,
       outcomes,
       exitCode: result.code,
       stderr: result.stderr,
