@@ -53,6 +53,17 @@ Three cheats are out of scope forever, not just for v0.1: wrong-cap (the test as
 
 Fix mode only. Eight checks: test-touches-code, fails-on-parent, passes-on-head, assertion-reachability, kill-check, regression, error-suppression, test-weakening. assertion-reachability and kill-check are the decisive pair (the same claim-coverage property by two independent methods); the rest are pre-filters or supporting signals.
 
+## The oracle layer
+
+A seam for importing a correctness signal from a source that is not the agent under test, so ClaimCheck can start catching the wrong-oracle cheat class the battery alone cannot: a non-vacuous test that asserts the wrong expected value. An `Oracle` takes the run context and returns a finding under the same PASS/WARN/BLOCK tiering as every check. The rules are non-negotiable and identical to the rest of the tool:
+
+- **Opt-in, graceful degradation.** With no oracle configured and no oracle input, the evidence record is byte-for-byte what it is today and the bundle hash is unchanged. The layer is purely additive: a finding can tighten a verdict, it can never weaken or replace a battery check.
+- **Deterministic or WARN.** An oracle that cannot evaluate its signal deterministically returns `indeterminate` (WARN), never a guess.
+- **No freeform-repro guessing.** The issue-repro oracle extracts only structured, machine-parseable repros (a fenced code block carrying an executable assertion). Parsing freeform prose intent with heuristics or a model is forbidden: it reintroduces exactly the guessing this tool exists to avoid. A repro present but not machine-extractable is WARN ("repro present, not machine-extractable"), never a fabricated assertion. An oracle verdict that ran on a misparsed repro is hollow and does not count; treat it like the hollow-PASS bug.
+- **Network stays in the live tier.** Fetching a linked issue is networked and lives only in the live tier, gated like the existing live runs. The deterministic core operates on issue text or a repro handed to it.
+
+The load-bearing truth, never to be overclaimed: importing an oracle moves the trust boundary, it does not delete it. Detection completeness is bounded by oracle completeness. A wrong fix that satisfies every imported relation still passes. The issue-repro oracle is shipped; metamorphic-relation, differential-on-unchanged-inputs, and property/contract oracles are registered behind the seam as no-ops, not implementations.
+
 ## The verdict bundle contract
 
 Content-addressed and replayable. It records: parent and head SHAs, changed line ranges, the mutant manifest with its seed, per-check results, the quarantined test list, and the tool version. The bundle hash is a function of inputs and results. Re-running the same inputs reproduces the same hash.
