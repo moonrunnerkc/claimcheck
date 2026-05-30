@@ -16,6 +16,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:live": "CLAIMCHECK_LIVE=1 vitest run --config vitest.live.config.ts",
     "eval": "tsx eval/harness.ts",
     "claimcheck": "tsx src/cli/run.ts"
   },

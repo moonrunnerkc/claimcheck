@@ -14,7 +14,8 @@ import type {
 import type { Verdict } from "./verdict.js";
 import { buildBundle, type VerdictBundle } from "../bundle/verdict-bundle.js";
 import { TOOL_VERSION } from "../version.js";
-import { createWorktrees, linkNodeModules } from "../git/worktree.js";
+import { createWorktrees } from "../git/worktree.js";
+import { prepareToolchain } from "../adapters/worktree-toolchain.js";
 import { listFiles, showFile, unifiedDiff } from "../git/git.js";
 import { analyzeDiff, isTestFile, sourceRanges, testFiles } from "../git/diff.js";
 import { runRegression } from "../checks/regression.js";
@@ -109,9 +110,12 @@ export async function runPipeline(
     options.head,
   );
   try {
+    // Prepare each worktree's toolchain: a dependency-free repo (the corpus)
+    // borrows ClaimCheck's modules by symlink and stays offline; a real repo is
+    // installed with its own lockfile so its tests resolve their dependencies.
     const toolchain = await findToolchainModules();
-    await linkNodeModules(worktrees.headDir, toolchain);
-    await linkNodeModules(worktrees.parentDir, toolchain);
+    await prepareToolchain(worktrees.headDir, toolchain);
+    await prepareToolchain(worktrees.parentDir, toolchain);
     const { configFile } = await prepareSandbox(worktrees.headDir);
     await prepareSandbox(worktrees.parentDir);
 
