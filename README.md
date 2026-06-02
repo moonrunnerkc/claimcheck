@@ -97,7 +97,7 @@ The verdict is a pure function of a canonical, content-addressed evidence record
 
 ## Install
 
-ClaimCheck is built from source. It requires Node.js 18.18 or newer.
+ClaimCheck is built from source. It requires Node.js 20.19 or newer (the toolchain Node is pinned in `.nvmrc`).
 
 ```bash
 git clone git@github.com:moonrunnerkc/claimcheck.git
@@ -154,12 +154,10 @@ ClaimCheck ships as a Docker action (`action.yml`, `action/entrypoint.sh`, `Dock
     fetch-depth: 0
 - uses: moonrunnerkc/claimcheck@master
   with:
-    base: ${{ github.event.pull_request.base.sha }}
-    head: ${{ github.event.pull_request.head.sha }}
     fail-on-warn: "false"
 ```
 
-Inputs: `base` and `head` (required SHAs), `repo` (default `/github/workspace`), `bundle-out` (default `<workspace>/.claimcheck`), and `fail-on-warn`. Output: `bundle-dir`, the directory the replayable bundle was written to.
+`base` and `head` are optional: the Action derives them from the `pull_request` context (head is the checked-out commit, base is the merge base with the PR's base branch). `fetch-depth: 0` is still required so the base resolves; a shallow checkout fails with a clear message. Inputs: `base`, `head`, `repo` (default `/github/workspace`), `bundle-out` (default `<workspace>/.claimcheck`), and `fail-on-warn`. Output: `bundle-dir`, the directory the replayable bundle was written to.
 
 ## Scope
 
@@ -180,9 +178,9 @@ ClaimCheck never claims to catch these. The decidable surface near them (a snaps
 
 ## Status
 
-The CLI, the core library, and the Docker GitHub Action are implemented and tested. Build and typecheck are clean, and the hermetic suite passes (221 tests across 34 files). On the 12-case corpus, the live pipeline detector scores 100% accuracy, BLOCK precision 1.0, mechanical recall 100%, and full determinism; the eval harness fails the run if BLOCK precision drops below 1.0.
+The CLI, the core library, and the Docker GitHub Action are implemented and tested. Build and typecheck are clean, and the hermetic suite passes (243 tests across 35 files). On the 12-case corpus, the live pipeline detector scores 100% accuracy, BLOCK precision 1.0, mechanical recall 100%, and full determinism; the eval harness fails the run if BLOCK precision drops below 1.0. CI (`.github/workflows/ci.yml`) runs the build, typecheck, hermetic suite, and eval on a clean checkout across Node 20, 22, and 24, so a missing file or a Node-version regression fails the gate rather than passing silently.
 
-Not yet shipped: no npm release, no tagged binary, and no `LICENSE` file.
+Not yet shipped: no npm release, no tagged binary or published image, and no `LICENSE` file. The Action builds the image from source on first use; pinning to a tagged release and a prebuilt image is the planned next step.
 
 ## License
 
