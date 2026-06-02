@@ -40,6 +40,62 @@ export function toMutateRanges(
   return coveredChangedLines.map((r) => `${r.file}:${r.start}-${r.end}`);
 }
 
+/** Upper bound on changed source lines the per-hunk fallback will mutate. */
+export const FALLBACK_MUTATE_LINE_CAP = 200;
+
+/** Total inclusive lines across a set of ranges. */
+function lineSpan(ranges: readonly LineRange[]): number {
+  return ranges.reduce((n, r) => n + (r.end - r.start + 1), 0);
+}
+
+/**
+ * The outcome of choosing what to mutate: the ranges, and whether they came
+ * from the per-hunk fallback rather than the covered intersection.
+ */
+export interface MutateSelection {
+  readonly ranges: string[];
+  /** True when coverage did not map onto the change and the hunks were used. */
+  readonly fallback: boolean;
+  /** A stable reason when the fallback was skipped (too large), else null. */
+  readonly skipped: string | null;
+}
+
+/**
+ * Choose Stryker mutate ranges. Normally the covered changed lines: tight and
+ * cheap. When coverage was collected but none of it mapped onto the changed
+ * lines (line-number skew on transpiled or .tsx sources, re-exports), fall back
+ * to mutating the changed hunks directly and let Stryker's per-test coverage
+ * decide kill vs survive; a genuinely uncovered mutant comes back no-coverage
+ * and never blocks. The fallback is bounded so a large diff cannot blow up CI.
+ *
+ * @param coveredChangedLines - changed lines the new tests executed.
+ * @param changedRanges - all changed source line ranges from the diff.
+ * @param coverageCollected - whether any coverage was recorded at all.
+ * @returns the mutate ranges and whether the fallback was used or skipped.
+ */
+export function selectMutateRanges(
+  coveredChangedLines: readonly LineRange[],
+  changedRanges: readonly LineRange[],
+  coverageCollected: boolean,
+): MutateSelection {
+  const covered = toMutateRanges(coveredChangedLines);
+  if (covered.length > 0) {
+    return { ranges: covered, fallback: false, skipped: null };
+  }
+  if (!coverageCollected || changedRanges.length === 0) {
+    return { ranges: [], fallback: false, skipped: null };
+  }
+  if (lineSpan(changedRanges) > FALLBACK_MUTATE_LINE_CAP) {
+    return {
+      ranges: [],
+      fallback: false,
+      skipped:
+        "coverage did not map onto the changed lines and the diff is too large to mutate the hunks directly",
+    };
+  }
+  return { ranges: toMutateRanges(changedRanges), fallback: true, skipped: null };
+}
+
 /**
  * Decide whether a mutant is block-worthy: a no-op or condition inversion that
  * cannot be an equivalent-mutant artifact.

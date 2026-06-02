@@ -29,7 +29,7 @@ import { collectCoverage, intersectChangedLines } from "../coverage/collect.js";
 import { headRunPasses } from "../adapters/vitest-run.js";
 import { runFailsOnParent } from "../checks/fails-on-parent.js";
 import { runStryker } from "../mutation/stryker-runner.js";
-import { toMutateRanges } from "../mutation/mutant-select.js";
+import { selectMutateRanges } from "../mutation/mutant-select.js";
 import {
   scanNondeterminism,
   type ScanInput,
@@ -245,7 +245,22 @@ export async function runPipeline(
       "indeterminate" as const,
     );
 
-    const mutateRanges = toMutateRanges(coveredChangedLines);
+    // Normally mutate the covered changed lines. When coverage was collected
+    // but did not map onto the change, fall back to the changed hunks so the
+    // kill-check still runs; note either the fallback or a skip for legibility.
+    const mutateSelection = selectMutateRanges(
+      coveredChangedLines,
+      changedRanges,
+      coverage.coveredLines.size > 0,
+    );
+    const mutateRanges = mutateSelection.ranges;
+    if (mutateSelection.fallback) {
+      degradations.push(
+        "coverage did not map onto the changed lines; the kill-check mutated the changed hunks directly",
+      );
+    } else if (mutateSelection.skipped) {
+      degradations.push(mutateSelection.skipped);
+    }
     const rawMutants =
       headTestsPass && mutateRanges.length > 0
         ? await attempt(
