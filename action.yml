@@ -7,11 +7,16 @@ author: Aftermath Technologies
 
 inputs:
   base:
-    description: Parent commit SHA the PR branches from.
-    required: true
+    description: >-
+      Parent commit SHA the PR branches from. Optional: defaults to the merge
+      base of head and the pull_request base branch.
+    required: false
+    default: ""
   head:
-    description: Head commit SHA of the PR.
-    required: true
+    description: >-
+      Head commit SHA of the PR. Optional: defaults to the checked-out commit.
+    required: false
+    default: ""
   repo:
     description: Path to the repository inside the workspace.
     required: false

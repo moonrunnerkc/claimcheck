@@ -35,6 +35,57 @@ export async function revParse(repoPath: string, ref: string): Promise<string> {
 }
 
 /**
+ * The merge base of two refs: their most recent common ancestor. This is the
+ * correct base for a PR diff, not the base branch tip, so unrelated upstream
+ * commits do not inflate the diff or show as spurious regressions.
+ *
+ * @param repoPath - path to the repository.
+ * @param a - the first ref.
+ * @param b - the second ref.
+ * @returns the common-ancestor SHA, or null when the refs do not resolve or
+ *   share no history.
+ */
+export async function mergeBase(
+  repoPath: string,
+  a: string,
+  b: string,
+): Promise<string | null> {
+  const out = await git(repoPath, ["merge-base", a, b], true);
+  return /^[0-9a-f]{40}$/.test(out) ? out : null;
+}
+
+/** Candidate upstream refs to take the merge base against, in precedence. */
+const BASE_CANDIDATES = [
+  "@{upstream}",
+  "origin/HEAD",
+  "origin/main",
+  "origin/master",
+  "main",
+  "master",
+] as const;
+
+/**
+ * Resolve the base ref for a PR when the caller did not supply one: the merge
+ * base of head against the first resolvable upstream default branch, falling
+ * back to head's first parent. This makes `claimcheck run` work with no --base
+ * on a typical checkout.
+ *
+ * @param repoPath - path to the repository.
+ * @param head - the head ref to find a base for.
+ * @returns a base ref (a SHA when a merge base was found, else `<head>~1`).
+ */
+export async function resolveBaseRef(
+  repoPath: string,
+  head: string,
+): Promise<string> {
+  for (const candidate of BASE_CANDIDATES) {
+    const base = await mergeBase(repoPath, head, candidate);
+    if (base) return base;
+  }
+  return `${head}~1`;
+}
+
+/**
  * Create a detached worktree of a repository at a specific commit.
  *
  * @param repoPath - path to the source repository.

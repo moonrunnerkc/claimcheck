@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 import { runPipeline } from "../core/pipeline.js";
 import { fixClaim } from "../core/claim.js";
+import { resolveBaseRef } from "../git/git.js";
 import { writeBundle, readBundle, replayBundle } from "../bundle/verdict-bundle.js";
-import { formatVerdict } from "./format.js";
+import { formatVerdict, conclusionLine } from "./format.js";
 import {
   buildAnnotations,
   renderAnnotationList,
   renderGithubAnnotations,
 } from "./annotations.js";
-import { parseArgs, requireOption, type ParsedArgs } from "./args.js";
+import { parseArgs, type ParsedArgs } from "./args.js";
 import { TOOL_VERSION } from "../version.js";
 
 /**
@@ -24,9 +25,10 @@ Usage:
   claimcheck replay <bundle.json>
 
 run options:
-  --repo <path>        git repository to analyze (required)
-  --base <sha>         parent commit or ref (required)
-  --head <sha>         head commit or ref (required)
+  --repo <path>        git repository to analyze (default: current directory)
+  --head <sha>         head commit or ref (default: HEAD)
+  --base <sha>         parent commit or ref (default: merge-base of head and
+                       the upstream default branch)
   --bundle-out <dir>   write the verdict bundle into this directory
   --cache-dir <dir>    cache and reuse bundles for identical inputs
   --json               print the verdict as JSON instead of text
@@ -42,10 +44,22 @@ function exitCode(tier: string, failOnWarn: boolean): number {
   return 0;
 }
 
+/** Read an option that may be absent or a bare boolean flag, as a value or null. */
+function optionValue(
+  options: Readonly<Record<string, string>>,
+  name: string,
+): string | null {
+  const value = options[name];
+  return value === undefined || value === "true" ? null : value;
+}
+
 async function commandRun(args: ParsedArgs): Promise<number> {
-  const repoPath = requireOption(args.options, "repo");
-  const base = requireOption(args.options, "base");
-  const head = requireOption(args.options, "head");
+  // Zero-config defaults: analyze the current repo, head at HEAD, and the base
+  // at the merge base with the upstream default branch. A reviewer can run
+  // `claimcheck run` on a checked-out PR branch with no flags.
+  const repoPath = optionValue(args.options, "repo") ?? ".";
+  const head = optionValue(args.options, "head") ?? "HEAD";
+  const base = optionValue(args.options, "base") ?? (await resolveBaseRef(repoPath, head));
   const failOnWarn = args.options["fail-on-warn"] === "true";
 
   const result = await runPipeline({
@@ -68,7 +82,16 @@ async function commandRun(args: ParsedArgs): Promise<number> {
 
   if (args.options["json"] === "true") {
     process.stdout.write(
-      `${JSON.stringify({ verdict: result.verdict, bundlePath, annotations }, null, 2)}\n`,
+      `${JSON.stringify(
+        {
+          conclusion: conclusionLine(result.verdict),
+          verdict: result.verdict,
+          bundlePath,
+          annotations,
+        },
+        null,
+        2,
+      )}\n`,
     );
   } else {
     process.stdout.write(`${formatVerdict(result.verdict)}\n`);

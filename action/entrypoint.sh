@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Entrypoint for the ClaimCheck GitHub Action. Resolves the base and head SHAs,
-# runs the CLI against the checked-out workspace, appends the verdict to the job
-# summary, and propagates the verdict exit code (BLOCK fails the check).
+# Entrypoint for the ClaimCheck GitHub Action. Resolves the base and head SHAs
+# (from the inputs, or automatically from the pull_request context), runs the
+# CLI against the checked-out workspace, appends the verdict to the job summary,
+# and propagates the verdict exit code (BLOCK fails the check).
 set -euo pipefail
 
 REPO="${INPUT_REPO:-/github/workspace}"
@@ -10,15 +11,34 @@ HEAD="${INPUT_HEAD:-}"
 BUNDLE_OUT="${INPUT_BUNDLE_OUT:-${REPO}/.claimcheck}"
 FAIL_ON_WARN="${INPUT_FAIL_ON_WARN:-false}"
 
-if [ -z "${BASE}" ] || [ -z "${HEAD}" ]; then
-  echo "claimcheck: base and head are required (set inputs base/head)" >&2
-  exit 64
-fi
-
 # git refuses to operate on a workspace owned by another user; trust it.
 git config --global --add safe.directory "${REPO}" || true
 
-ARGS=(run --repo "${REPO}" --base "${BASE}" --head "${HEAD}" --bundle-out "${BUNDLE_OUT}" --annotations github)
+# Default head to the checked-out commit when the workflow did not pass one.
+if [ -z "${HEAD}" ]; then
+  HEAD="$(git -C "${REPO}" rev-parse HEAD)"
+fi
+
+# Default base to the merge base with the PR's base branch. The merge base, not
+# the base branch tip, is the right parent: it keeps unrelated upstream commits
+# out of the diff.
+if [ -z "${BASE}" ] && [ -n "${GITHUB_BASE_REF:-}" ]; then
+  git -C "${REPO}" fetch --no-tags --depth=1 origin "${GITHUB_BASE_REF}" 2>/dev/null || true
+  BASE="$(git -C "${REPO}" merge-base "${HEAD}" "origin/${GITHUB_BASE_REF}" 2>/dev/null || echo "")"
+fi
+
+# A shallow checkout cannot resolve a base; say exactly how to fix it.
+IS_SHALLOW="$(git -C "${REPO}" rev-parse --is-shallow-repository 2>/dev/null || echo false)"
+if [ -z "${BASE}" ] && [ "${IS_SHALLOW}" = "true" ]; then
+  echo "claimcheck: the checkout is shallow and no base could be resolved." >&2
+  echo "claimcheck: add 'fetch-depth: 0' to actions/checkout, or pass the 'base' input." >&2
+  exit 64
+fi
+
+ARGS=(run --repo "${REPO}" --head "${HEAD}" --bundle-out "${BUNDLE_OUT}" --annotations github)
+if [ -n "${BASE}" ]; then
+  ARGS+=(--base "${BASE}")
+fi
 if [ "${FAIL_ON_WARN}" = "true" ]; then
   ARGS+=(--fail-on-warn)
 fi
