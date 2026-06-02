@@ -54,6 +54,7 @@ function baseRecord(): EvidenceRecord {
     staticTail: [],
     vacuousAssertions: [],
     quarantined: [],
+    degradations: [],
     toolVersion: "0.1.0",
   };
 }

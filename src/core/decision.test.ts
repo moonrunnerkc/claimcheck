@@ -25,6 +25,7 @@ function honestRecord(overrides: Partial<EvidenceRecord> = {}): EvidenceRecord {
     staticTail: [],
     vacuousAssertions: [],
     quarantined: [],
+    degradations: [],
     toolVersion: "0.1.0",
     ...overrides,
   };
@@ -451,6 +452,17 @@ describe("decide", () => {
         ],
       }),
       "vacuous-assertion",
+    );
+    expect(check.tier).toBe("warn");
+    expect(verdict.tier).not.toBe("block");
+  });
+
+  it("warns, never blocks, when a stage degraded", () => {
+    const { verdict, check } = findCheck(
+      honestRecord({
+        degradations: ["mutation run did not complete; the kill-check ran without mutants"],
+      }),
+      "degraded-run",
     );
     expect(check.tier).toBe("warn");
     expect(verdict.tier).not.toBe("block");

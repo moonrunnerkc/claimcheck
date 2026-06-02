@@ -181,6 +181,16 @@ export interface EvidenceRecord {
   readonly vacuousAssertions: readonly VacuousAssertion[];
   readonly quarantined: readonly QuarantineNote[];
   /**
+   * Stable, deterministic notes for stages that could not complete (a mutation
+   * run that failed to start, an install that errored, a taint pass that threw).
+   * Each is a reason a coverage- or analysis-scoped check ran degraded rather
+   * than on real data. They never carry a raw error message (which would not be
+   * byte-stable); only a fixed stage-level reason. Surfaced as WARN so a
+   * degraded run is never mistaken for a clean one, and the pipeline degrades
+   * instead of crashing.
+   */
+  readonly degradations: readonly string[];
+  /**
    * Findings from the oracle layer: correctness signal imported from a source
    * that is not the agent. Optional and additive. The field is omitted entirely
    * when no oracle produced a finding, so a run with no oracle configured (the
@@ -329,6 +339,7 @@ export function canonicalizeRecord(record: EvidenceRecord): EvidenceRecord {
     quarantined: [...record.quarantined].sort(
       (a, b) => a.test.localeCompare(b.test) || a.reason.localeCompare(b.reason),
     ),
+    degradations: [...record.degradations].sort((a, b) => a.localeCompare(b)),
   };
 }
 

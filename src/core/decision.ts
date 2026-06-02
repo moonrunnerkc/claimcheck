@@ -609,6 +609,31 @@ function checkQuarantine(record: EvidenceRecord): CheckResult {
   };
 }
 
+/**
+ * degraded-run. A stage that could not complete (mutation failed to start, an
+ * install errored, taint threw) leaves its check running on partial or empty
+ * data. Surface that as WARN with the stable reason so a degraded run is never
+ * read as a clean PASS, and so the pipeline degrades instead of crashing. It
+ * never blocks: a stage that did not run cannot prove a lie.
+ */
+function checkDegradations(record: EvidenceRecord): CheckResult {
+  if (record.degradations.length === 0) {
+    return {
+      id: "degraded-run",
+      tier: "pass",
+      summary: "Every analysis stage completed.",
+      evidence: [],
+    };
+  }
+  return {
+    id: "degraded-run",
+    tier: "warn",
+    summary:
+      "A stage could not complete, so its check ran on partial or empty data; the verdict rests on the stages that did run.",
+    evidence: [...record.degradations],
+  };
+}
+
 /** Map one oracle conclusion to its verdict tier. */
 function tierForConclusion(conclusion: OracleConclusion): VerdictTier {
   switch (conclusion) {
@@ -677,6 +702,7 @@ export function decide(record: EvidenceRecord): Verdict {
     checkVacuousAssertion(record),
     checkTestWeakening(record),
     checkQuarantine(record),
+    checkDegradations(record),
   ];
   // The oracle check is appended only when an oracle produced a finding, so a
   // run with no oracle yields exactly the battery above, unchanged.

@@ -41,6 +41,7 @@ export const stubDetector: Detector = {
       staticTail: [],
       vacuousAssertions: [],
       quarantined: [],
+      degradations: [],
       toolVersion: "0.1.0-stub",
     };
     return Promise.resolve(decide(record));

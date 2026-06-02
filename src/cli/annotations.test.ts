@@ -25,6 +25,7 @@ function record(over: Partial<EvidenceRecord> = {}): EvidenceRecord {
     staticTail: [],
     vacuousAssertions: [],
     quarantined: [],
+    degradations: [],
     toolVersion: "0.1.0",
     ...over,
   };

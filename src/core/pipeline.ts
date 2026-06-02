@@ -124,13 +124,43 @@ export async function runPipeline(
     options.base,
     options.head,
   );
+  // Stable, deterministic notes for stages that fail to complete. A failing
+  // stage degrades to a neutral result and a WARN, never a crash: an analysis
+  // that did not run cannot prove a lie, so it must not block, but it also must
+  // not silently pass. The reason is fixed text (never a raw error message,
+  // which would not be byte-stable); the raw error goes to stderr only.
+  const degradations: string[] = [];
+  async function attempt<T>(
+    reason: string,
+    run: () => Promise<T>,
+    fallback: T,
+  ): Promise<T> {
+    try {
+      return await run();
+    } catch (err) {
+      degradations.push(reason);
+      process.stderr.write(
+        `claimcheck: ${reason} (${err instanceof Error ? err.message : String(err)})\n`,
+      );
+      return fallback;
+    }
+  }
+
   try {
     // Prepare each worktree's toolchain: a dependency-free repo (the corpus)
     // borrows ClaimCheck's modules by symlink and stays offline; a real repo is
     // installed with its own lockfile so its tests resolve their dependencies.
+    // An install failure degrades rather than crashing: the tests then fail to
+    // run, which passes-on-head already reports as WARN.
     const toolchain = await findToolchainModules();
-    await prepareToolchain(worktrees.headDir, toolchain);
-    await prepareToolchain(worktrees.parentDir, toolchain);
+    await attempt(
+      "toolchain install did not complete; tests may not resolve their dependencies",
+      async () => {
+        await prepareToolchain(worktrees.headDir, toolchain);
+        await prepareToolchain(worktrees.parentDir, toolchain);
+      },
+      undefined,
+    );
     const { configFile } = await prepareSandbox(worktrees.headDir);
     await prepareSandbox(worktrees.parentDir);
 
@@ -203,21 +233,31 @@ export async function runPipeline(
       coverage.coveredLines,
     );
 
-    const failsOnParent = await runFailsOnParent({
-      parentDir: worktrees.parentDir,
-      headSha: worktrees.headSha,
-      testFiles: activeTestFiles,
-      configFile,
-    });
+    const failsOnParent = await attempt(
+      "fails-on-parent could not run on the parent worktree",
+      () =>
+        runFailsOnParent({
+          parentDir: worktrees.parentDir,
+          headSha: worktrees.headSha,
+          testFiles: activeTestFiles,
+          configFile,
+        }),
+      "indeterminate" as const,
+    );
 
     const mutateRanges = toMutateRanges(coveredChangedLines);
     const rawMutants =
       headTestsPass && mutateRanges.length > 0
-        ? await runStryker({
-            worktreeDir: worktrees.headDir,
-            mutateRanges,
-            testFiles: activeTestFiles,
-          })
+        ? await attempt(
+            "mutation run did not complete; the kill-check ran without mutants",
+            () =>
+              runStryker({
+                worktreeDir: worktrees.headDir,
+                mutateRanges,
+                testFiles: activeTestFiles,
+              }),
+            [] as Awaited<ReturnType<typeof runStryker>>,
+          )
         : [];
     // Analytical pre-filter: classify unreachable and trivially-equivalent
     // mutants so their survival is never read as a weak test.
@@ -234,14 +274,19 @@ export async function runPipeline(
     // Differential regression: parent tests the PR did not touch must still pass.
     const parentTestFiles = (await listFiles(options.repoPath, worktrees.baseSha))
       .filter(isTestFile);
-    const regressions = await runRegression({
-      parentDir: worktrees.parentDir,
-      headDir: worktrees.headDir,
-      parentTestFiles,
-      changedTestFiles: newTestFiles,
-      quarantinedTests: flakyNames,
-      configFile,
-    });
+    const regressions = await attempt(
+      "regression check could not run; parent tests were not re-verified on head",
+      () =>
+        runRegression({
+          parentDir: worktrees.parentDir,
+          headDir: worktrees.headDir,
+          parentTestFiles,
+          changedTestFiles: newTestFiles,
+          quarantinedTests: flakyNames,
+          configFile,
+        }),
+      [] as string[],
+    );
 
     // Error-suppression: swallowed errors on the changed source lines.
     const rangesByFile = new Map<string, LineRange[]>();
@@ -324,12 +369,17 @@ export async function runPipeline(
     // source and test files in place; nothing reads the worktree after it.
     const taint =
       headTestsPass && coveredChangedLines.length > 0
-        ? await runTaint({
-            worktreeDir: worktrees.headDir,
-            sourceFiles: changedSourceFiles,
-            testFiles: activeTestFiles,
-            coveredChangedLines,
-          })
+        ? await attempt(
+            "assertion-reachability taint did not complete; relying on the kill-check",
+            () =>
+              runTaint({
+                worktreeDir: worktrees.headDir,
+                sourceFiles: changedSourceFiles,
+                testFiles: activeTestFiles,
+                coveredChangedLines,
+              }),
+            [] as Awaited<ReturnType<typeof runTaint>>,
+          )
         : [];
 
     const record: EvidenceRecord = {
@@ -351,6 +401,7 @@ export async function runPipeline(
       staticTail,
       vacuousAssertions,
       quarantined,
+      degradations,
       ...(oracleFindings ? { oracleFindings } : {}),
       toolVersion: TOOL_VERSION,
     };
