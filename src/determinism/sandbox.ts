@@ -83,11 +83,13 @@ function __cryptoByte() {
   t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
   return (t ^ (t >>> 14)) & 0xff;
 }
-// crypto.getRandomValues is a non-configurable own property and crypto.subtle
-// carries a brand check, so the two random methods cannot be shadowed in place.
-// globalThis.crypto itself is configurable, so pin a Proxy that overrides the
-// two random sources and delegates everything else to the real Crypto with the
-// correct receiver, leaving subtle and the rest intact.
+// The two random sources are pinned at two layers so the pin holds across Node
+// versions. On current Node they are configurable, writable methods on
+// Crypto.prototype, so pinning the prototype reaches the bare crypto global,
+// globalThis.crypto, and every instance. On older Node where they were
+// non-configurable own properties on the instance, the prototype pin is
+// shadowed, so a delegating Proxy on globalThis.crypto covers that case too.
+// crypto.subtle carries a brand check and is left intact by both layers.
 const __realCrypto = globalThis.crypto;
 if (__realCrypto && typeof __realCrypto.getRandomValues === "function") {
   let __uuid = 0;
@@ -103,6 +105,11 @@ if (__realCrypto && typeof __realCrypto.getRandomValues === "function") {
       for (let i = 0; i < buffer.length; i++) buffer[i] = __cryptoByte();
     }
     return buffer;
+  }
+  const __cryptoProto = Object.getPrototypeOf(__realCrypto);
+  if (__cryptoProto) {
+    pin(__cryptoProto, "randomUUID", detRandomUUID);
+    pin(__cryptoProto, "getRandomValues", detGetRandomValues);
   }
   const pinnedCrypto = new Proxy(__realCrypto, {
     get(target, prop, receiver) {
