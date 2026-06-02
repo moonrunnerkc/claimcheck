@@ -337,6 +337,9 @@ export async function runPipeline(
       headSha: worktrees.headSha,
       changedRanges,
       headTestsPass,
+      // A non-empty coverage map means collection worked; an empty one from a
+      // passing run is a measurement failure, not a real "nothing covered".
+      coverageCollected: coverage.coveredLines.size > 0,
       failsOnParent,
       coveredChangedLines,
       mutants,

@@ -15,6 +15,7 @@ function baseRecord(): EvidenceRecord {
       { file: "src/a.ts", start: 1, end: 3 },
     ],
     headTestsPass: true,
+    coverageCollected: true,
     failsOnParent: "failed",
     coveredChangedLines: [{ file: "src/a.ts", start: 1, end: 3 }],
     mutants: [

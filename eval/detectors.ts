@@ -29,6 +29,7 @@ export const stubDetector: Detector = {
       headSha: repo.headSha,
       changedRanges: [],
       headTestsPass: true,
+      coverageCollected: true,
       failsOnParent: "failed",
       coveredChangedLines: [],
       mutants: [],

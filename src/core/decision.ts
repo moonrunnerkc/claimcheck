@@ -84,6 +84,38 @@ function checkTestTouchesCode(record: EvidenceRecord): CheckResult {
 }
 
 /**
+ * coverage-reliability. A passing run that recorded no coverage at all is a
+ * measurement failure, not a real result: every coverage-scoped check
+ * (test-touches-code, kill-check, assertion-reachability) then has nothing real
+ * to act on and silently degrades. Surface that explicitly as WARN so an empty
+ * coverage map never reads as a clean verdict without a trace, and so the
+ * empty-coverage BLOCK escalations know not to fire. PASS when coverage was
+ * collected, or when there is nothing to measure (no passing run, no changed
+ * lines).
+ */
+function checkCoverageReliability(record: EvidenceRecord): CheckResult {
+  const measurable =
+    record.headTestsPass && record.changedRanges.length > 0;
+  if (!measurable || record.coverageCollected) {
+    return {
+      id: "coverage-reliability",
+      tier: "pass",
+      summary: record.coverageCollected
+        ? "Coverage was collected for the run."
+        : "Coverage reliability not evaluated: no passing run or no changed lines.",
+      evidence: [],
+    };
+  }
+  return {
+    id: "coverage-reliability",
+    tier: "warn",
+    summary:
+      "The tests passed but coverage collection recorded nothing; the coverage-scoped checks could not run on real data. Verify the coverage provider works in this environment.",
+    evidence: [`headSha=${record.headSha}`, "coverage map empty after a passing run"],
+  };
+}
+
+/**
  * fails-on-parent. The new tests, run against the unfixed parent, must fail. A
  * pass means the test never exercised the bug. This is the main false-positive
  * risk (a real fix may add a test that also covers new behavior), so a pass is
@@ -462,6 +494,11 @@ function checkStaticTail(record: EvidenceRecord): CheckResult {
  */
 function mockedOutSut(record: EvidenceRecord): VacuousAssertion[] {
   if (record.coveredChangedLines.length > 0) return [];
+  // An empty covered set only proves the changed code never ran when coverage
+  // was actually collected. If collection failed (a passing run that recorded
+  // nothing), the emptiness is a measurement gap, not proof, so it must not
+  // block. coverage-reliability surfaces that case as WARN instead.
+  if (!record.coverageCollected) return [];
   return record.vacuousAssertions.filter(
     (v) => v.kind === "mock-the-sut" && v.mockedChangedFile.length > 0,
   );
@@ -625,6 +662,7 @@ export function decide(record: EvidenceRecord): Verdict {
   const battery: CheckResult[] = [
     checkPassesOnHead(record),
     checkTestTouchesCode(record),
+    checkCoverageReliability(record),
     checkFailsOnParent(record),
     checkAssertionReachability(record),
     checkKillCheck(record),

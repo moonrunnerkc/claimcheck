@@ -13,6 +13,7 @@ function record(over: Partial<EvidenceRecord> = {}): EvidenceRecord {
     headSha: "head",
     changedRanges: [{ file: "src/a.ts", start: 5, end: 5 }],
     headTestsPass: true,
+    coverageCollected: true,
     failsOnParent: "failed",
     coveredChangedLines: [{ file: "src/a.ts", start: 5, end: 5 }],
     mutants: [],

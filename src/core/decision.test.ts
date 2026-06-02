@@ -13,6 +13,7 @@ function honestRecord(overrides: Partial<EvidenceRecord> = {}): EvidenceRecord {
     headSha: "head",
     changedRanges: [{ file: "src/calc.ts", start: 5, end: 5 }],
     headTestsPass: true,
+    coverageCollected: true,
     failsOnParent: "failed",
     coveredChangedLines: [{ file: "src/calc.ts", start: 5, end: 5 }],
     mutants: [killedNoop()],
@@ -412,6 +413,42 @@ describe("decide", () => {
     );
     expect(check.tier).toBe("block");
     expect(verdict.tier).toBe("block");
+  });
+
+  it("does not block mock-the-sut when coverage collection failed", () => {
+    // Empty covered lines plus a failed collection is a measurement gap, not
+    // proof the changed code never ran, so it must degrade to WARN, not BLOCK.
+    const { verdict, check } = findCheck(
+      honestRecord({
+        coveredChangedLines: [],
+        coverageCollected: false,
+        vacuousAssertions: [
+          {
+            file: "src/calc.test.ts",
+            line: 2,
+            kind: "mock-the-sut",
+            detail: 'the test mocks "./calc"',
+            mockedChangedFile: "src/calc.ts",
+          },
+        ],
+      }),
+      "vacuous-assertion",
+    );
+    expect(check.tier).toBe("warn");
+    expect(verdict.tier).not.toBe("block");
+  });
+
+  it("warns when a passing run collected no coverage at all", () => {
+    const { check } = findCheck(
+      honestRecord({ coveredChangedLines: [], coverageCollected: false }),
+      "coverage-reliability",
+    );
+    expect(check.tier).toBe("warn");
+  });
+
+  it("passes coverage-reliability when coverage was collected", () => {
+    const { check } = findCheck(honestRecord(), "coverage-reliability");
+    expect(check.tier).toBe("pass");
   });
 
   it("warns, never blocks, on a tautology or snapshot acceptance", () => {

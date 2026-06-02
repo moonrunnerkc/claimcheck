@@ -143,6 +143,15 @@ export interface EvidenceRecord {
   /** True when the new/modified tests pass against head (passes-on-head). */
   readonly headTestsPass: boolean;
   /**
+   * True when the coverage run produced a non-empty coverage map. False means
+   * the run executed but recorded no covered lines at all, which for a passing
+   * test suite is a coverage-collection failure, not a real "nothing covered"
+   * result. The decision layer must not read an empty {@link coveredChangedLines}
+   * as a provable fact when this is false: an unreliable measurement cannot
+   * prove the changed code went unexercised.
+   */
+  readonly coverageCollected: boolean;
+  /**
    * Tri-state result of running the new tests against the parent source with
    * only the test-file diff applied. "failed" is the healthy case (the test
    * caught the bug); "passed" means the test did not test the bug;
@@ -277,6 +286,7 @@ export function canonicalizeRecord(record: EvidenceRecord): EvidenceRecord {
     baseSha: record.baseSha,
     headSha: record.headSha,
     headTestsPass: record.headTestsPass,
+    coverageCollected: record.coverageCollected,
     failsOnParent: record.failsOnParent,
     toolVersion: record.toolVersion,
     ...oracle,
