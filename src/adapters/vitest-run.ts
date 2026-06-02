@@ -142,10 +142,12 @@ export async function runVitest(
   const resultsFile = join(reportDir, "results.json");
   const bin = join(options.cwd, "node_modules", ".bin", "vitest");
 
+  // The run roots at the spawn cwd (options.cwd). Passing an explicit --root is
+  // redundant and, under vitest 4's v8 provider, suppresses coverage entirely
+  // (the report comes back with zero files), which silently starves every
+  // coverage-scoped check. Rely on cwd alone.
   const args = [
     "run",
-    "--root",
-    options.cwd,
     "--reporter=json",
     "--outputFile",
     resultsFile,
