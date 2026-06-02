@@ -1,12 +1,16 @@
 # Hermetic runtime for ClaimCheck. Pins Node and ships the built CLI together
 # with the mutation engine and test runner so a target repository borrows the
 # toolchain rather than installing its own.
-FROM node:20-slim
+FROM node:22-slim
 
 # git is required for worktrees and diffs.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends git ca-certificates \
   && rm -rf /var/lib/apt/lists/*
+
+# Make pnpm and yarn available so a target repo installs with its own package
+# manager (a workspace repo cannot be installed by npm).
+RUN corepack enable
 
 WORKDIR /opt/claimcheck
 

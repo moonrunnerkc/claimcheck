@@ -10,22 +10,61 @@ import {
 describe("chooseInstallStrategy", () => {
   it("symlinks when the repo declares no dependencies", () => {
     expect(
-      chooseInstallStrategy({ declaresDependencies: false, npmLockfile: null }),
+      chooseInstallStrategy({
+        declaresDependencies: false,
+        npmLockfile: null,
+        altManager: null,
+      }),
     ).toBe("symlink");
   });
 
-  it("uses npm ci when a lockfile is present", () => {
+  it("uses npm ci when an npm lockfile is present", () => {
     expect(
       chooseInstallStrategy({
         declaresDependencies: true,
         npmLockfile: "package-lock.json",
+        altManager: null,
       }),
     ).toBe("npm-ci");
   });
 
-  it("falls back to npm install when deps are declared but no npm lockfile exists", () => {
+  it("uses pnpm when the repo ships a pnpm lockfile", () => {
     expect(
-      chooseInstallStrategy({ declaresDependencies: true, npmLockfile: null }),
+      chooseInstallStrategy({
+        declaresDependencies: true,
+        npmLockfile: null,
+        altManager: "pnpm",
+      }),
+    ).toBe("pnpm");
+  });
+
+  it("uses yarn when the repo ships a yarn lockfile", () => {
+    expect(
+      chooseInstallStrategy({
+        declaresDependencies: true,
+        npmLockfile: null,
+        altManager: "yarn",
+      }),
+    ).toBe("yarn");
+  });
+
+  it("prefers npm ci when both npm and pnpm lockfiles exist", () => {
+    expect(
+      chooseInstallStrategy({
+        declaresDependencies: true,
+        npmLockfile: "package-lock.json",
+        altManager: "pnpm",
+      }),
+    ).toBe("npm-ci");
+  });
+
+  it("falls back to npm install when deps are declared but no lockfile exists", () => {
+    expect(
+      chooseInstallStrategy({
+        declaresDependencies: true,
+        npmLockfile: null,
+        altManager: null,
+      }),
     ).toBe("npm-install");
   });
 });
@@ -67,7 +106,7 @@ describe("inspectRepoInstall", () => {
     }
   });
 
-  it("treats a non-npm lockfile (pnpm) as npm-install", async () => {
+  it("detects a pnpm lockfile and chooses the pnpm strategy", async () => {
     const dir = await fixture({
       "package.json": JSON.stringify({ dependencies: { defu: "^6" } }),
       "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
@@ -75,7 +114,22 @@ describe("inspectRepoInstall", () => {
     try {
       const info = await inspectRepoInstall(dir);
       expect(info.npmLockfile).toBeNull();
-      expect(chooseInstallStrategy(info)).toBe("npm-install");
+      expect(info.altManager).toBe("pnpm");
+      expect(chooseInstallStrategy(info)).toBe("pnpm");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("detects a yarn lockfile and chooses the yarn strategy", async () => {
+    const dir = await fixture({
+      "package.json": JSON.stringify({ dependencies: { defu: "^6" } }),
+      "yarn.lock": "# yarn lockfile v1\n",
+    });
+    try {
+      const info = await inspectRepoInstall(dir);
+      expect(info.altManager).toBe("yarn");
+      expect(chooseInstallStrategy(info)).toBe("yarn");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -85,7 +139,11 @@ describe("inspectRepoInstall", () => {
     const dir = await mkdtemp(join(tmpdir(), "claimcheck-inspect-"));
     try {
       const info = await inspectRepoInstall(dir);
-      expect(info).toEqual({ declaresDependencies: false, npmLockfile: null });
+      expect(info).toEqual({
+        declaresDependencies: false,
+        npmLockfile: null,
+        altManager: null,
+      });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

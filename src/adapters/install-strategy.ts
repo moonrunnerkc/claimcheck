@@ -14,32 +14,53 @@ import { join } from "node:path";
 /**
  * - `npm-ci`: the repo declares dependencies and ships an npm lockfile; install
  *   reproducibly from it.
- * - `npm-install`: the repo declares dependencies but ships no npm lockfile
- *   (for example a pnpm or yarn lockfile); install from package.json.
+ * - `pnpm` / `yarn`: the repo ships that manager's lockfile; install with it so
+ *   a workspace (`workspace:*`) repo resolves, which `npm install` cannot do.
+ * - `npm-install`: the repo declares dependencies but ships no recognized
+ *   lockfile; install from package.json.
  * - `symlink`: the repo declares no dependencies; borrow ClaimCheck's toolchain.
  */
-export type InstallStrategy = "npm-ci" | "npm-install" | "symlink";
+export type InstallStrategy =
+  | "npm-ci"
+  | "npm-install"
+  | "pnpm"
+  | "yarn"
+  | "symlink";
+
+/** A non-npm package manager inferred from a repo's lockfile. */
+export type AltManager = "pnpm" | "yarn";
 
 export interface RepoInstallInfo {
   /** True when package.json lists any dependencies or devDependencies. */
   readonly declaresDependencies: boolean;
   /** The npm lockfile name if present, else null. */
   readonly npmLockfile: string | null;
+  /** A non-npm package manager inferred from its lockfile, if any. */
+  readonly altManager: AltManager | null;
 }
 
 /** Lockfiles npm can install reproducibly from, in precedence order. */
 const NPM_LOCKFILES = ["package-lock.json", "npm-shrinkwrap.json"] as const;
 
+/** Non-npm lockfiles mapped to their package manager. */
+const ALT_LOCKFILES: ReadonlyArray<{ name: string; manager: AltManager }> = [
+  { name: "pnpm-lock.yaml", manager: "pnpm" },
+  { name: "yarn.lock", manager: "yarn" },
+];
+
 /**
  * Choose an install strategy from a repo's declared dependencies and lockfile.
- * Pure: same info in, same strategy out.
+ * Pure: same info in, same strategy out. An npm lockfile wins over a non-npm
+ * one (a repo with both is an npm repo), matching npm's own precedence.
  *
- * @param info - whether the repo declares dependencies and its npm lockfile.
+ * @param info - whether the repo declares dependencies and its lockfiles.
  * @returns the strategy to prepare the worktree with.
  */
 export function chooseInstallStrategy(info: RepoInstallInfo): InstallStrategy {
   if (!info.declaresDependencies) return "symlink";
-  return info.npmLockfile !== null ? "npm-ci" : "npm-install";
+  if (info.npmLockfile !== null) return "npm-ci";
+  if (info.altManager !== null) return info.altManager;
+  return "npm-install";
 }
 
 interface PackageJsonShape {
@@ -84,7 +105,7 @@ export async function inspectRepoInstall(
       hasAnyKey(pkg.dependencies) || hasAnyKey(pkg.devDependencies);
   } catch {
     // No package.json (or unparseable): nothing to install.
-    return { declaresDependencies: false, npmLockfile: null };
+    return { declaresDependencies: false, npmLockfile: null, altManager: null };
   }
   let npmLockfile: string | null = null;
   for (const name of NPM_LOCKFILES) {
@@ -93,5 +114,12 @@ export async function inspectRepoInstall(
       break;
     }
   }
-  return { declaresDependencies, npmLockfile };
+  let altManager: AltManager | null = null;
+  for (const { name, manager } of ALT_LOCKFILES) {
+    if (await exists(join(worktreeDir, name))) {
+      altManager = manager;
+      break;
+    }
+  }
+  return { declaresDependencies, npmLockfile, altManager };
 }

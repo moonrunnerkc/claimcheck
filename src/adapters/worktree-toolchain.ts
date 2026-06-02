@@ -53,29 +53,63 @@ async function toolchainVersion(
   }
 }
 
-/** Run the repo's own dependency install, falling back from ci to install. */
-async function installRepoDeps(
+/** The install command for a strategy: the package manager's own install. */
+function installCommand(strategy: InstallStrategy): {
+  cmd: string;
+  args: string[];
+} {
+  switch (strategy) {
+    case "npm-ci":
+      return { cmd: "npm", args: ["ci", ...COMMON_FLAGS] };
+    case "pnpm":
+      // Respect the lockfile; pnpm resolves workspace: deps npm cannot.
+      return { cmd: "pnpm", args: ["install", "--frozen-lockfile"] };
+    case "yarn":
+      return { cmd: "yarn", args: ["install"] };
+    case "npm-install":
+    case "symlink":
+      return { cmd: "npm", args: ["install", ...COMMON_FLAGS] };
+  }
+}
+
+/** Run an install command, returning null when its binary is not on PATH. */
+async function tryInstall(
   worktreeDir: string,
-  strategy: InstallStrategy,
-): Promise<void> {
-  const verb = strategy === "npm-ci" ? "ci" : "install";
-  let result = await exec("npm", [verb, ...COMMON_FLAGS], {
-    cwd: worktreeDir,
-    timeoutMs: INSTALL_TIMEOUT_MS,
-    allowNonZero: true,
-  });
-  // npm ci aborts when the lockfile is out of sync with package.json; the
-  // honest fallback is a plain install so a real repo still runs.
-  if (result.code !== 0 && verb === "ci") {
-    result = await exec("npm", ["install", ...COMMON_FLAGS], {
+  cmd: string,
+  args: readonly string[],
+): Promise<{ code: number; stderr: string } | null> {
+  try {
+    return await exec(cmd, args, {
       cwd: worktreeDir,
       timeoutMs: INSTALL_TIMEOUT_MS,
       allowNonZero: true,
     });
+  } catch {
+    // The package manager is not installed (spawn failed).
+    return null;
   }
-  if (result.code !== 0) {
+}
+
+/**
+ * Install the repo's dependencies with its own package manager, falling back to
+ * a plain npm install when that manager is unavailable or its frozen install
+ * fails (a missing pnpm/yarn binary, or a lockfile out of sync with
+ * package.json). The fallback keeps a real repo running; a workspace repo that
+ * genuinely needs pnpm and has no pnpm still fails here and degrades to WARN.
+ */
+async function installRepoDeps(
+  worktreeDir: string,
+  strategy: InstallStrategy,
+): Promise<void> {
+  const primary = installCommand(strategy);
+  let result = await tryInstall(worktreeDir, primary.cmd, primary.args);
+  if (!result || result.code !== 0) {
+    result = await tryInstall(worktreeDir, "npm", ["install", ...COMMON_FLAGS]);
+  }
+  if (!result || result.code !== 0) {
+    const detail = result ? result.stderr.trim().slice(0, 600) : `${primary.cmd} is not installed`;
     throw new Error(
-      `npm ${verb} failed in ${worktreeDir}; the repo's dependencies could not be installed. npm said: ${result.stderr.trim().slice(0, 600)}`,
+      `dependency install failed in ${worktreeDir} (strategy ${strategy}); the repo's dependencies could not be installed. ${detail}`,
     );
   }
 }
