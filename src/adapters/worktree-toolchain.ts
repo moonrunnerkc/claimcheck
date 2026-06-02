@@ -25,29 +25,38 @@ export interface ToolchainPrep {
   readonly strategy: InstallStrategy;
   /** True when a real dependency install ran (the networked path). */
   readonly installed: boolean;
+  /** True when the mutation tooling was overlaid (the kill-check can run). */
+  readonly mutationReady: boolean;
 }
-
-/** Mutation packages overlaid into a real-installed worktree for the kill-check. */
-const MUTATION_PACKAGES = [
-  "@stryker-mutator/core",
-  "@stryker-mutator/vitest-runner",
-] as const;
 
 const INSTALL_TIMEOUT_MS = 600_000;
 const COMMON_FLAGS = ["--no-audit", "--no-fund", "--legacy-peer-deps"];
 
-/** Read the version of a package installed in ClaimCheck's toolchain. */
-async function toolchainVersion(
-  toolchainModules: string,
-  pkg: string,
-): Promise<string | null> {
+/**
+ * Stryker version whose vitest-runner matches the repo's installed vitest. The
+ * runner drives the repo's OWN vitest, so the overlaid Stryker has to match it:
+ * the 9.x runner peers vitest>=2 and the 8.7 runner supports vitest 1.x and 0.x.
+ * Overlaying a 9.x runner onto a vitest-1 repo is unresolvable, which is the
+ * real-world break this avoids.
+ *
+ * @param vitestMajor - the repo's installed vitest major version, or null.
+ * @returns the Stryker core and vitest-runner version to install.
+ */
+function strykerVersionFor(vitestMajor: number | null): string {
+  return vitestMajor !== null && vitestMajor < 2 ? "8.7.1" : "9.6.1";
+}
+
+/** Read the repo's installed vitest major version, or null when absent. */
+async function repoVitestMajor(worktreeDir: string): Promise<number | null> {
   try {
     const raw = await readFile(
-      join(toolchainModules, pkg, "package.json"),
+      join(worktreeDir, "node_modules", "vitest", "package.json"),
       "utf8",
     );
     const parsed = JSON.parse(raw) as { version?: unknown };
-    return typeof parsed.version === "string" ? parsed.version : null;
+    if (typeof parsed.version !== "string") return null;
+    const major = Number.parseInt(parsed.version.split(".")[0] ?? "", 10);
+    return Number.isFinite(major) ? major : null;
   } catch {
     return null;
   }
@@ -62,8 +71,13 @@ function installCommand(strategy: InstallStrategy): {
     case "npm-ci":
       return { cmd: "npm", args: ["ci", ...COMMON_FLAGS] };
     case "pnpm":
-      // Respect the lockfile; pnpm resolves workspace: deps npm cannot.
-      return { cmd: "pnpm", args: ["install", "--frozen-lockfile"] };
+      // Respect the lockfile; pnpm resolves workspace: deps npm cannot. Hoist
+      // the layout flat so Stryker (overlaid later) can resolve its plugin and
+      // the repo's vitest from a single node_modules.
+      return {
+        cmd: "pnpm",
+        args: ["install", "--frozen-lockfile", "--config.node-linker=hoisted"],
+      };
     case "yarn":
       return { cmd: "yarn", args: ["install"] };
     case "npm-install":
@@ -114,35 +128,78 @@ async function installRepoDeps(
   }
 }
 
-/** Overlay ClaimCheck's Stryker tooling into the repo's node_modules. */
-async function overlayMutationTooling(
-  worktreeDir: string,
-  toolchainModules: string,
-): Promise<void> {
-  const specs: string[] = [];
-  for (const pkg of MUTATION_PACKAGES) {
-    const version = await toolchainVersion(toolchainModules, pkg);
-    specs.push(version ? `${pkg}@${version}` : pkg);
-  }
-  const result = await exec(
-    "npm",
-    ["install", "--no-save", ...COMMON_FLAGS, ...specs],
-    { cwd: worktreeDir, timeoutMs: INSTALL_TIMEOUT_MS, allowNonZero: true },
-  );
-  if (result.code !== 0) {
-    throw new Error(
-      `could not overlay mutation tooling (${specs.join(", ")}) into ${worktreeDir}; the kill-check would not run. npm said: ${result.stderr.trim().slice(0, 400)}`,
-    );
+/**
+ * Candidate overlay commands, in order, for adding the Stryker packages with
+ * the repo's own package manager. npm cannot operate on a pnpm or yarn
+ * node_modules (the "link:" protocol and the symlinked store are unsupported),
+ * so the overlay has to match the install. A workspace variant is tried first
+ * for pnpm/yarn (a single-package repo rejects it, so the plain form follows).
+ */
+function overlayCommands(
+  strategy: InstallStrategy,
+  specs: readonly string[],
+): ReadonlyArray<{ cmd: string; args: string[] }> {
+  switch (strategy) {
+    case "pnpm":
+      return [
+        { cmd: "pnpm", args: ["add", "-w", "--save-dev", "--config.node-linker=hoisted", ...specs] },
+        { cmd: "pnpm", args: ["add", "--save-dev", "--config.node-linker=hoisted", ...specs] },
+      ];
+    case "yarn":
+      return [
+        { cmd: "yarn", args: ["add", "-D", "-W", ...specs] },
+        { cmd: "yarn", args: ["add", "-D", ...specs] },
+      ];
+    case "npm-ci":
+    case "npm-install":
+    case "symlink":
+      return [{ cmd: "npm", args: ["install", "--no-save", ...COMMON_FLAGS, ...specs] }];
   }
 }
 
 /**
- * Prepare one worktree's toolchain according to its declared dependencies.
+ * Overlay the Stryker tooling into the repo's node_modules, version-matched to
+ * the repo's vitest and using the repo's own package manager. Non-fatal: the
+ * kill-check is one check among many, so an overlay failure must not abort the
+ * run. It returns whether the overlay succeeded; on failure the pipeline has no
+ * Stryker binary and the kill-check degrades to WARN.
+ *
+ * @param worktreeDir - the worktree to overlay into; deps must be installed.
+ * @param strategy - the install strategy, to pick the matching overlay command.
+ * @returns true when the mutation tooling is in place.
+ */
+async function overlayMutationTooling(
+  worktreeDir: string,
+  strategy: InstallStrategy,
+): Promise<boolean> {
+  const version = strykerVersionFor(await repoVitestMajor(worktreeDir));
+  const specs = [
+    `@stryker-mutator/core@${version}`,
+    `@stryker-mutator/vitest-runner@${version}`,
+  ];
+  for (const { cmd, args } of overlayCommands(strategy, specs)) {
+    const result = await exec(cmd, args, {
+      cwd: worktreeDir,
+      timeoutMs: INSTALL_TIMEOUT_MS,
+      allowNonZero: true,
+    }).catch(() => null);
+    if (result && result.code === 0) return true;
+  }
+  process.stderr.write(
+    `claimcheck: could not overlay mutation tooling (${specs.join(", ")}) into ${worktreeDir}; the kill-check will not run.\n`,
+  );
+  return false;
+}
+
+/**
+ * Prepare one worktree's toolchain according to its declared dependencies. The
+ * dependency install is required (the tests cannot run without it); the
+ * mutation overlay is best-effort (only the kill-check needs it).
  *
  * @param worktreeDir - the worktree to prepare.
- * @param toolchainModules - ClaimCheck's node_modules, for the symlink path and
- *   for pinning the overlaid mutation tooling to the same versions.
- * @returns the chosen strategy and whether a real install ran.
+ * @param toolchainModules - ClaimCheck's node_modules, for the symlink path.
+ * @returns the chosen strategy, whether a real install ran, and whether the
+ *   mutation tooling is in place.
  */
 export async function prepareToolchain(
   worktreeDir: string,
@@ -152,9 +209,9 @@ export async function prepareToolchain(
   const strategy = chooseInstallStrategy(info);
   if (strategy === "symlink") {
     await linkNodeModules(worktreeDir, toolchainModules);
-    return { strategy, installed: false };
+    return { strategy, installed: false, mutationReady: true };
   }
   await installRepoDeps(worktreeDir, strategy);
-  await overlayMutationTooling(worktreeDir, toolchainModules);
-  return { strategy, installed: true };
+  const mutationReady = await overlayMutationTooling(worktreeDir, strategy);
+  return { strategy, installed: true, mutationReady };
 }

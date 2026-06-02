@@ -153,10 +153,18 @@ export async function runPipeline(
     // An install failure degrades rather than crashing: the tests then fail to
     // run, which passes-on-head already reports as WARN.
     const toolchain = await findToolchainModules();
+    // Each worktree installs independently: a head failure must not skip the
+    // parent setup that fails-on-parent and regression depend on.
     await attempt(
-      "toolchain install did not complete; tests may not resolve their dependencies",
+      "head toolchain install did not complete; head tests may not resolve their dependencies",
       async () => {
         await prepareToolchain(worktrees.headDir, toolchain);
+      },
+      undefined,
+    );
+    await attempt(
+      "parent toolchain install did not complete; fails-on-parent and regression may not run",
+      async () => {
         await prepareToolchain(worktrees.parentDir, toolchain);
       },
       undefined,
