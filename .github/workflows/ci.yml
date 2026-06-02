@@ -1,0 +1,31 @@
+name: CI
+
+# The hermetic gate. It builds, typechecks, and runs the offline suite plus the
+# eval on a clean checkout across the supported Node versions. A clean checkout
+# is the point: the missing src/coverage module and the Node-version coverage
+# break were both invisible without one. The eval fails the job if BLOCK
+# precision drops below 1.0.
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  hermetic:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20", "22", "24"]
+    name: node ${{ matrix.node }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run eval
