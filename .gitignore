@@ -2,9 +2,13 @@ node_modules/
 dist/
 *.log
 .claimcheck-work/
-coverage/
+# Anchored so it only ignores the repo-root coverage output dir, never
+# src/coverage/ (the source module). The unanchored form silently dropped
+# src/coverage/collect.ts from git history.
+/coverage/
 .stryker-tmp/
 reports/
 *.orig
 *.bak
 test-format.ts
+.DS_Store
