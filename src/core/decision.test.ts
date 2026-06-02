@@ -297,6 +297,24 @@ describe("decide", () => {
     expect(check.tier).toBe("warn");
   });
 
+  it("only warns when a whole test was removed, since deletion is ambiguous", () => {
+    const { verdict, check } = findCheck(
+      honestRecord({
+        testWeakenings: [
+          {
+            file: "test/calc.test.ts",
+            line: 1,
+            kind: "test-removed",
+            detail: "1 test(s) removed",
+          },
+        ],
+      }),
+      "test-weakening",
+    );
+    expect(check.tier).toBe("warn");
+    expect(verdict.tier).not.toBe("block");
+  });
+
   it("warns on an error-suppression pattern, never blocks on it alone", () => {
     const { verdict, check } = findCheck(
       honestRecord({

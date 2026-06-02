@@ -39,6 +39,31 @@ describe("compareTestFile", () => {
     expect(findings.some((w) => w.kind === "test-skipped")).toBe(true);
   });
 
+  it("flags a deleted test as the ambiguous test-removed, not assertion-removed", () => {
+    const parent =
+      'import { expect, it } from "vitest";\n' +
+      'it("a", () => { expect(f()).toBe(1); });\n' +
+      'it("b", () => { expect(g()).toBe(2); });\n';
+    const head =
+      'import { expect, it } from "vitest";\n' +
+      'it("a", () => { expect(f()).toBe(1); });\n';
+    const findings = compareTestFile("t.test.ts", parent, head);
+    expect(findings.some((w) => w.kind === "test-removed")).toBe(true);
+    expect(findings.some((w) => w.kind === "assertion-removed")).toBe(false);
+  });
+
+  it("still flags an assertion removed from a surviving test as assertion-removed", () => {
+    const parent =
+      'import { expect, it } from "vitest";\n' +
+      'it("a", () => { expect(f()).toBe(1); expect(g()).toBe(2); });\n';
+    const head =
+      'import { expect, it } from "vitest";\n' +
+      'it("a", () => { expect(f()).toBe(1); });\n';
+    const findings = compareTestFile("t.test.ts", parent, head);
+    expect(findings.some((w) => w.kind === "assertion-removed")).toBe(true);
+    expect(findings.some((w) => w.kind === "test-removed")).toBe(false);
+  });
+
   it("reports nothing when the assertions are unchanged", () => {
     const same = wrap("expect(f()).toBe(5);");
     expect(compareTestFile("t.test.ts", same, same)).toEqual([]);

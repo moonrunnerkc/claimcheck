@@ -247,6 +247,7 @@ export interface TestWeakening {
     | "assertion-removed"
     | "assertion-loosened"
     | "expected-value-changed"
+    | "test-removed"
     | "test-skipped"
     | "test-todo";
   readonly detail: string;

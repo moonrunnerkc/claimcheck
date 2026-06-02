@@ -542,11 +542,16 @@ function checkVacuousAssertion(record: EvidenceRecord): CheckResult {
   };
 }
 
+/** Test-weakening kinds that are ambiguous, so WARN rather than BLOCK. */
+const AMBIGUOUS_WEAKENINGS = new Set(["expected-value-changed", "test-removed"]);
+
 /**
  * test-weakening. Removing or loosening an existing assertion, skipping a test,
- * or marking it todo to fit the changed code is a BLOCK. Changing an expected
- * value is ambiguous (the behavior may legitimately have changed), so it is
- * WARN.
+ * or marking it todo to fit the changed code is a BLOCK. Two kinds are
+ * ambiguous and only WARN: a changed expected value (the behavior may
+ * legitimately have changed) and a removed test (a test may have been
+ * legitimately deleted, e.g. for removed functionality; that is not the same as
+ * stripping an assertion from a test that still exists).
  */
 function checkTestWeakening(record: EvidenceRecord): CheckResult {
   if (record.testWeakenings.length === 0) {
@@ -558,7 +563,7 @@ function checkTestWeakening(record: EvidenceRecord): CheckResult {
     };
   }
   const blocking = record.testWeakenings.filter(
-    (w) => w.kind !== "expected-value-changed",
+    (w) => !AMBIGUOUS_WEAKENINGS.has(w.kind),
   );
   if (blocking.length > 0) {
     return {
@@ -573,7 +578,7 @@ function checkTestWeakening(record: EvidenceRecord): CheckResult {
     id: "test-weakening",
     tier: "warn",
     summary:
-      "An existing test's expected value changed; confirm the behavior change is intended.",
+      "An existing test's expected value changed or a test was removed; confirm the change is intended.",
     evidence: record.testWeakenings.map(
       (w) => `${w.file}:${w.line} ${w.kind}: ${w.detail}`,
     ),

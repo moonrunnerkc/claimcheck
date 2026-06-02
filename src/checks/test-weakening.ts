@@ -30,6 +30,8 @@ const SKIP_IDENTIFIERS = new Set(["xit", "xtest", "xdescribe"]);
 
 interface Extract {
   expectCount: number;
+  /** Number of test cases (it/test calls, including skip variants). */
+  testCount: number;
   strict: number;
   loose: number;
   /** Literal expected values from strict matchers, as a sorted multiset. */
@@ -37,6 +39,8 @@ interface Extract {
   skips: { kind: "test-skipped" | "test-todo"; line: number }[];
   firstLooseLine: number | null;
 }
+
+const TEST_IDENTIFIERS = new Set(["it", "test"]);
 
 function parse(file: string, content: string): ts.SourceFile {
   return ts.createSourceFile(
@@ -53,6 +57,7 @@ function extract(file: string, content: string): Extract {
   const sf = parse(file, content);
   const result: Extract = {
     expectCount: 0,
+    testCount: 0,
     strict: 0,
     loose: 0,
     strictLiterals: [],
@@ -66,8 +71,18 @@ function extract(file: string, content: string): Extract {
       if (ts.isIdentifier(callee) && callee.text === "expect") {
         result.expectCount++;
       }
+      if (ts.isIdentifier(callee) && TEST_IDENTIFIERS.has(callee.text)) {
+        result.testCount++;
+      }
       if (ts.isPropertyAccessExpression(callee)) {
         const name = callee.name.text;
+        // it.skip / it.only / test.each etc. still declare one test case.
+        if (
+          ts.isIdentifier(callee.expression) &&
+          TEST_IDENTIFIERS.has(callee.expression.text)
+        ) {
+          result.testCount++;
+        }
         if (STRICT_MATCHERS.has(name)) {
           result.strict++;
           const arg = node.arguments[0];
@@ -91,6 +106,7 @@ function extract(file: string, content: string): Extract {
         }
       }
       if (ts.isIdentifier(callee) && SKIP_IDENTIFIERS.has(callee.text)) {
+        result.testCount++;
         result.skips.push({
           kind: "test-skipped",
           line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1,
@@ -133,11 +149,18 @@ export function compareTestFile(
   }
 
   if (after.expectCount < before.expectCount) {
+    // A drop in assertions alongside a drop in test cases is a deletion, which
+    // is ambiguous (a test may have been legitimately removed), so it is the
+    // softer test-removed (WARN). A drop with the test count unchanged means a
+    // surviving test lost an assertion, the real weaken-to-fit cheat (BLOCK).
+    const testsRemoved = after.testCount < before.testCount;
     findings.push({
       file,
       line: 1,
-      kind: "assertion-removed",
-      detail: `expect() calls dropped from ${before.expectCount} to ${after.expectCount}`,
+      kind: testsRemoved ? "test-removed" : "assertion-removed",
+      detail: testsRemoved
+        ? `${before.testCount - after.testCount} test(s) removed and expect() calls dropped from ${before.expectCount} to ${after.expectCount}; a deleted test is ambiguous, not necessarily a weakened assertion`
+        : `expect() calls dropped from ${before.expectCount} to ${after.expectCount} with the test count unchanged; an assertion was removed from a surviving test`,
     });
   }
 
