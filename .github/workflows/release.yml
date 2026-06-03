@@ -1,0 +1,64 @@
+name: Release
+
+# Fires only on a deliberate version tag (vX.Y.Z). Nothing here runs on a normal
+# push, so the repo stays release-free until you tag. The GHCR image job is
+# self-sufficient (built-in token). The npm job is guarded: it no-ops unless an
+# NPM_TOKEN secret exists and the package is publishable (private removed, a
+# license set), so an accidental tag cannot publish to npm.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  ghcr-image:
+    name: Build and push the Action image to GHCR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  npm-package:
+    name: Publish to npm (skips without NPM_TOKEN)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - run: npm ci
+      - run: npm run build
+      - name: Publish if configured
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "NPM_TOKEN is not set; skipping npm publish (this is expected until release is configured)."
+            exit 0
+          fi
+          if [ "$(node -p "require('./package.json').private === true")" = "true" ]; then
+            echo "package.json is still private; skipping npm publish. See RELEASING.md."
+            exit 0
+          fi
+          npm publish --access public
