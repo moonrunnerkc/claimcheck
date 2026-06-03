@@ -8,6 +8,12 @@ A deterministic, pre-merge gate that tries to falsify a pull request's own claim
 
 It does not trust the agent's tests. It attacks them, then returns a replayable verdict: PASS, WARN, or BLOCK.
 
+[![CI](https://github.com/moonrunnerkc/claimcheck/actions/workflows/ci.yml/badge.svg)](https://github.com/moonrunnerkc/claimcheck/actions/workflows/ci.yml)
+[![Node](https://img.shields.io/badge/node-%E2%89%A520.19-brightgreen)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6)](https://www.typescriptlang.org)
+[![License](https://img.shields.io/badge/license-UNLICENSED-lightgrey)](#license)
+[![Status](https://img.shields.io/badge/status-pre--release-orange)](#status)
+
 </div>
 
 [What it proves](#what-it-proves) ·
