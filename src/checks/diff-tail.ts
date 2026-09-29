@@ -56,7 +56,7 @@ export function scanCoverageThreshold(
   const findings: StaticTailFinding[] = [];
   for (const [key, prev] of before) {
     const next = after.get(key);
-    if (next !== undefined && next < prev) {
+    if (next !== undefined && next > prev) {
       findings.push({
         file: path,
         line: 0,
